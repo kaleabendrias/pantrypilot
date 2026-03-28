@@ -1,0 +1,6 @@
+backend/vendor/
+backend/runtime/*
+!backend/runtime/uploads/
+backend/runtime/uploads/*
+!backend/runtime/uploads/.gitkeep
+mysql_data/

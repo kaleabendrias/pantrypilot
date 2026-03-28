@@ -1,0 +1,237 @@
+ALTER TABLE pickup_points
+  ADD COLUMN IF NOT EXISTS region_code VARCHAR(20) NULL,
+  ADD COLUMN IF NOT EXISTS latitude DECIMAL(10,7) NULL,
+  ADD COLUMN IF NOT EXISTS longitude DECIMAL(10,7) NULL,
+  ADD COLUMN IF NOT EXISTS service_radius_km DECIMAL(6,2) NOT NULL DEFAULT 10.00;
+
+ALTER TABLE bookings
+  ADD COLUMN IF NOT EXISTS slot_start DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS slot_end DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS arrived_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS checked_in_by BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS no_show_marked_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS customer_zip4 VARCHAR(10) NULL,
+  ADD COLUMN IF NOT EXISTS customer_region_code VARCHAR(20) NULL,
+  ADD COLUMN IF NOT EXISTS customer_latitude DECIMAL(10,7) NULL,
+  ADD COLUMN IF NOT EXISTS customer_longitude DECIMAL(10,7) NULL,
+  ADD COLUMN IF NOT EXISTS distance_km DECIMAL(8,3) NULL;
+
+ALTER TABLE payments
+  ADD COLUMN IF NOT EXISTS payer_name_enc TEXT NULL;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS account_enabled TINYINT(1) NOT NULL DEFAULT 1;
+
+ALTER TABLE attachments
+  ADD COLUMN IF NOT EXISTS sha256 CHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS magic_verified TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS watermarked TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS hotlink_token CHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS signed_url_expire_at DATETIME NULL;
+
+ALTER TABLE audit_logs
+  ADD COLUMN IF NOT EXISTS prev_hash CHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS hash_current CHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45) NULL;
+
+CREATE TABLE IF NOT EXISTS pickup_slots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pickup_point_id BIGINT UNSIGNED NOT NULL,
+  slot_start DATETIME NOT NULL,
+  slot_end DATETIME NOT NULL,
+  capacity INT UNSIGNED NOT NULL,
+  reserved_count INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_slot (pickup_point_id, slot_start, slot_end)
+);
+
+CREATE TABLE IF NOT EXISTS booking_blacklist (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  reason VARCHAR(255) NOT NULL,
+  blocked_until DATETIME NULL,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS address_regions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  region_code VARCHAR(20) NOT NULL UNIQUE,
+  region_name VARCHAR(120) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS zip4_reference (
+  zip4_code VARCHAR(10) PRIMARY KEY,
+  region_code VARCHAR(20) NOT NULL,
+  city VARCHAR(120) NOT NULL,
+  state_code VARCHAR(10) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_zip4_region (region_code),
+  CONSTRAINT fk_zip4_region FOREIGN KEY (region_code) REFERENCES address_regions(region_code)
+);
+
+CREATE TABLE IF NOT EXISTS homepage_modules (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  module_key VARCHAR(50) NOT NULL,
+  payload JSON NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  updated_by BIGINT UNSIGNED NULL,
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_homepage_module_scope (module_key, store_id, warehouse_id, department_id)
+);
+
+CREATE TABLE IF NOT EXISTS message_templates (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  template_code VARCHAR(60) NOT NULL,
+  title VARCHAR(120) NOT NULL,
+  content TEXT NOT NULL,
+  category VARCHAR(30) NOT NULL DEFAULT 'system',
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_message_template_scope (template_code, store_id, warehouse_id, department_id)
+);
+
+ALTER TABLE campaigns
+  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
+  ADD INDEX IF NOT EXISTS idx_campaign_scope (store_id, warehouse_id, department_id);
+
+ALTER TABLE homepage_modules
+  DROP INDEX IF EXISTS module_key,
+  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
+  ADD UNIQUE KEY IF NOT EXISTS uk_homepage_module_scope (module_key, store_id, warehouse_id, department_id);
+
+ALTER TABLE message_templates
+  DROP INDEX IF EXISTS template_code,
+  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
+  ADD UNIQUE KEY IF NOT EXISTS uk_message_template_scope (template_code, store_id, warehouse_id, department_id);
+
+CREATE TABLE IF NOT EXISTS user_message_preferences (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  marketing_opt_out TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_msg_pref_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS message_center (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  template_id BIGINT UNSIGNED NULL,
+  title VARCHAR(120) NOT NULL,
+  body TEXT NOT NULL,
+  is_marketing TINYINT(1) NOT NULL DEFAULT 0,
+  sent_at DATETIME NOT NULL,
+  read_at DATETIME NULL,
+  clicked_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gateway_orders (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_ref VARCHAR(60) NOT NULL UNIQUE,
+  booking_id BIGINT UNSIGNED NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  provider VARCHAR(30) NOT NULL DEFAULT 'wechat_local',
+  transaction_ref VARCHAR(80) NULL,
+  callback_payload JSON NULL,
+  callback_verified TINYINT(1) NOT NULL DEFAULT 0,
+  callback_processed_at DATETIME NULL,
+  expire_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_gateway_tx_ref (transaction_ref)
+);
+
+CREATE TABLE IF NOT EXISTS gateway_callbacks (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  transaction_ref VARCHAR(80) NOT NULL,
+  payload JSON NOT NULL,
+  processed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_callback_transaction (transaction_ref)
+);
+
+ALTER TABLE gateway_callbacks
+  DROP COLUMN IF EXISTS callback_hash;
+
+ALTER TABLE gateway_callbacks
+  ADD UNIQUE KEY IF NOT EXISTS uk_callback_transaction (transaction_ref);
+
+CREATE TABLE IF NOT EXISTS finance_reconciliation_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  batch_ref VARCHAR(60) NOT NULL,
+  gateway_order_ref VARCHAR(60) NOT NULL,
+  issue_type VARCHAR(30) NOT NULL,
+  repaired TINYINT(1) NOT NULL DEFAULT 0,
+  repaired_note VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS finance_adjustments (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  payment_id BIGINT UNSIGNED NOT NULL,
+  adjust_amount DECIMAL(10,2) NOT NULL,
+  reason VARCHAR(255) NOT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS critical_reauth_tokens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expire_at DATETIME NOT NULL,
+  consumed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS stock_snapshots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  sku VARCHAR(60) NOT NULL,
+  qty INT NOT NULL,
+  snapshot_date DATE NOT NULL,
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE stock_snapshots
+  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
+  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
+  ADD INDEX IF NOT EXISTS idx_stock_scope (store_id, warehouse_id, department_id);
+
+CREATE TABLE IF NOT EXISTS anomaly_alerts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  alert_type VARCHAR(60) NOT NULL,
+  severity VARCHAR(20) NOT NULL,
+  payload JSON NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_notes (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  booking_id BIGINT UNSIGNED NOT NULL,
+  note_text TEXT NOT NULL,
+  printable_payload JSON NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
