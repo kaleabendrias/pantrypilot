@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PantryPilot Kiosk</title>
+  <link rel="stylesheet" href="assets/layui/css/layui.css">
+  <link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <main class="shell">
+  <header class="hero">
+    <div class="hero-main">
+      <h1>PantryPilot Control Deck</h1>
+      <p>Offline-ready retail pantry platform for kiosk operations and local Wi-Fi ordering.</p>
+      <div class="auth-row">
+        <input id="username" placeholder="username" value="admin" />
+        <input id="password" type="password" placeholder="password" value="admin12345" />
+        <button class="layui-btn" id="btnLogin">Login</button>
+        <span id="authState">Not authenticated</span>
+      </div>
+    </div>
+    <aside class="sync-panel">
+      <strong>Offline Queue</strong>
+      <div id="syncState">Ready</div>
+      <button class="layui-btn layui-btn-sm" id="btnSync">Sync Pending Actions</button>
+    </aside>
+  </header>
+
+  <div class="layui-tab" lay-filter="main-tab">
+    <ul class="layui-tab-title">
+      <li class="layui-this">Dashboard</li>
+      <li>Recipes</li>
+      <li>Booking Flow</li>
+      <li>Operations</li>
+      <li>Payments</li>
+      <li>Messages</li>
+      <li>Files</li>
+      <li>Admin</li>
+    </ul>
+    <div class="layui-tab-content">
+      <div class="layui-tab-item layui-show">
+        <div id="kpiCards" class="cards"></div>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="search-panel">
+          <input id="recipeSearchIngredient" placeholder="ingredient (e.g. garbanzo)" />
+          <input id="recipeSearchCookware" placeholder="cookware (e.g. pot)" />
+          <input id="recipeSearchExcludeAllergens" placeholder="exclude allergens (comma-separated)" />
+          <select id="recipeSearchPrep">
+            <option value="">Any prep time</option>
+            <option value="30">Under 30 min</option>
+          </select>
+          <select id="recipeSearchStepCount">
+            <option value="">Any step count</option>
+            <option value="5">Max 5 steps</option>
+            <option value="8">Max 8 steps</option>
+            <option value="12">Max 12 steps</option>
+          </select>
+          <select id="recipeSearchDifficulty">
+            <option value="">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <select id="recipeSearchMaxCalories">
+            <option value="">Any calories</option>
+            <option value="450">Under 450 kcal</option>
+            <option value="600">Under 600 kcal</option>
+          </select>
+          <select id="recipeSearchBudget">
+            <option value="">Any budget</option>
+            <option value="15">Under $15</option>
+          </select>
+          <select id="recipeSearchRankMode">
+            <option value="popular">Rank: Popular</option>
+            <option value="time-saving">Rank: Time-saving</option>
+            <option value="budget">Rank: Budget</option>
+            <option value="low-calorie">Rank: Low-calorie</option>
+          </select>
+          <button class="layui-btn" id="btnSearchRecipes">Search</button>
+          <button class="layui-btn layui-btn-primary" id="btnLoadRecipes">Load All</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreateRecipe">Quick Add Recipe</button>
+        </div>
+        <div id="recipesGrid" class="recipe-grid"></div>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadBookings">Load Bookings</button>
+          <button class="layui-btn" id="btnRecipeDetail">Recipe Detail #1</button>
+          <button class="layui-btn" id="btnCheckCapacity">Refresh Slot Capacity</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreateBooking">Book Selected Slot</button>
+          <input id="bookingSelectedId" placeholder="selected booking id" />
+        </div>
+        <div id="slotPicker" class="slot-picker"></div>
+        <div id="bookingFeedback" class="feedback"></div>
+        <table class="layui-table" id="bookingsTable"></table>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnTodayPickups">Today's Pickups</button>
+          <button class="layui-btn" id="btnCheckIn">Check-in Booking #1</button>
+          <button class="layui-btn layui-btn-normal" id="btnSweepNoShow">Run No-show Sweep</button>
+          <button class="layui-btn" id="btnDispatchNote">Print Dispatch #1</button>
+          <button class="layui-btn" id="btnLoadModules">Load Homepage Modules</button>
+          <button class="layui-btn" id="btnSaveModule">Save Carousel Module</button>
+          <button class="layui-btn" id="btnSaveTemplate">Save Message Template</button>
+        </div>
+        <div id="opsFeedback" class="feedback"></div>
+        <table class="layui-table" id="opsTable"></table>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadPayments">Load Payments</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreatePayment">Capture Payment</button>
+          <button class="layui-btn" id="btnCreateGwOrder">Create Gateway Order</button>
+          <button class="layui-btn" id="btnAutoCancelGw">Auto-cancel Pending</button>
+          <button class="layui-btn" id="btnDailyRecon">Daily Reconcile</button>
+        </div>
+        <div class="toolbar">
+          <button class="layui-btn" id="btnIssueReauth">Issue Reauth</button>
+          <button class="layui-btn" id="btnRepairIssue">Repair Issue #1</button>
+          <button class="layui-btn" id="btnCloseBatch">Close Batch</button>
+          <button class="layui-btn" id="btnRefund">Refund PAY-REF</button>
+          <button class="layui-btn" id="btnAdjust">Adjust PAY-REF</button>
+        </div>
+        <div id="financeFeedback" class="feedback"></div>
+        <table class="layui-table" id="paymentsTable"></table>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadEvents">Load Events</button>
+          <button class="layui-btn layui-btn-normal" id="btnQueueEvent">Queue Notification</button>
+          <button class="layui-btn" id="btnSendMarketing">Send Marketing</button>
+          <button class="layui-btn" id="btnLoadInbox">Inbox</button>
+          <button class="layui-btn" id="btnMsgAnalytics">Read/Click Analytics</button>
+        </div>
+        <div id="msgFeedback" class="feedback"></div>
+        <table class="layui-table" id="eventsTable"></table>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadFiles">Load Files</button>
+          <button class="layui-btn" id="btnUploadMockFile">Upload Mock PDF</button>
+          <button class="layui-btn" id="btnSignFile">Signed URL (Selected)</button>
+          <button class="layui-btn" id="btnCleanupFiles">Run 180-day Cleanup</button>
+          <input id="fileSelectedId" placeholder="selected file id" />
+        </div>
+        <div id="fileFeedback" class="feedback"></div>
+        <table class="layui-table" id="filesTable"></table>
+      </div>
+
+      <div class="layui-tab-item">
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadUsers">Load Users</button>
+          <button class="layui-btn" id="btnLoadAudit">Load Audit Logs</button>
+          <button class="layui-btn" id="btnOpsDashboard">Ops Metrics</button>
+          <button class="layui-btn" id="btnAnomalies">Anomalies</button>
+          <button class="layui-btn" id="btnExportCsv">Export CSV</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreateRole">Create Role</button>
+          <button class="layui-btn" id="btnLoadRoles">Load Roles</button>
+          <button class="layui-btn" id="btnLoadPerms">Load Perms</button>
+        </div>
+        <div id="adminFeedback" class="feedback"></div>
+        <div class="split-grid">
+          <table class="layui-table" id="usersTable"></table>
+          <table class="layui-table" id="auditTable"></table>
+        </div>
+      </div>
+    </div>
+  </div>
+  </main>
+
+  <script src="assets/layui/layui.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
