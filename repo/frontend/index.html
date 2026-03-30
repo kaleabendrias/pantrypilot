@@ -16,8 +16,8 @@
       <h1>PantryPilot Control Deck</h1>
       <p>Offline-ready retail pantry platform for kiosk operations and local Wi-Fi ordering.</p>
       <div class="auth-row">
-        <input id="username" placeholder="username" value="admin" />
-        <input id="password" type="password" placeholder="password" value="admin12345" />
+        <input id="username" placeholder="username" />
+        <input id="password" type="password" placeholder="password" />
         <button class="layui-btn" id="btnLogin">Login</button>
         <span id="authState">Not authenticated</span>
       </div>
@@ -83,7 +83,31 @@
           </select>
           <button class="layui-btn" id="btnSearchRecipes">Search</button>
           <button class="layui-btn layui-btn-primary" id="btnLoadRecipes">Load All</button>
-          <button class="layui-btn layui-btn-normal" id="btnCreateRecipe">Quick Add Recipe</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreateRecipe">Create Recipe From Form</button>
+        </div>
+        <div class="search-panel">
+          <input id="recipeName" placeholder="new recipe name" />
+          <input id="recipeDescription" placeholder="description" />
+          <input id="recipeIngredients" placeholder="ingredients (comma-separated)" />
+          <input id="recipeCookware" placeholder="cookware (comma-separated)" />
+          <input id="recipeAllergens" placeholder="allergens (comma-separated)" />
+          <input id="recipePrepMinutes" type="number" min="1" placeholder="prep minutes" />
+          <input id="recipeStepCount" type="number" min="1" placeholder="step count" />
+          <input id="recipeServings" type="number" min="1" placeholder="servings" />
+          <select id="recipeDifficultyCreate">
+            <option value="">difficulty</option>
+            <option value="easy">easy</option>
+            <option value="medium">medium</option>
+            <option value="hard">hard</option>
+          </select>
+          <input id="recipeCalories" type="number" min="0" placeholder="calories" />
+          <input id="recipeEstimatedCost" type="number" step="0.01" min="0" placeholder="estimated cost" />
+          <select id="recipeStatus">
+            <option value="">status</option>
+            <option value="draft">draft</option>
+            <option value="published">published</option>
+            <option value="archived">archived</option>
+          </select>
         </div>
         <div id="recipesGrid" class="recipe-grid"></div>
       </div>
@@ -91,10 +115,24 @@
       <div class="layui-tab-item">
         <div class="toolbar">
           <button class="layui-btn" id="btnLoadBookings">Load Bookings</button>
-          <button class="layui-btn" id="btnRecipeDetail">Recipe Detail #1</button>
+          <button class="layui-btn" id="btnRecipeDetail">Recipe Detail (Selected)</button>
           <button class="layui-btn" id="btnCheckCapacity">Refresh Slot Capacity</button>
           <button class="layui-btn layui-btn-normal" id="btnCreateBooking">Book Selected Slot</button>
           <input id="bookingSelectedId" placeholder="selected booking id" />
+        </div>
+        <div class="search-panel">
+          <select id="pickupPointSelect"><option value="">Pickup point</option></select>
+          <input id="pickupPointManual" placeholder="or pickup point id" />
+          <input id="slotDate" type="date" />
+          <input id="slotWindowStart" type="time" placeholder="window start" />
+          <input id="slotWindowEnd" type="time" placeholder="window end" />
+          <input id="slotStepMinutes" type="number" min="15" step="15" placeholder="step minutes" />
+          <input id="bookingQuantity" type="number" min="1" placeholder="quantity" />
+          <input id="bookingZip4" placeholder="ZIP+4 (12345-6789)" />
+          <input id="bookingRegionCode" placeholder="region code" />
+          <input id="bookingLatitude" placeholder="latitude" />
+          <input id="bookingLongitude" placeholder="longitude" />
+          <input id="bookingNote" placeholder="booking note" />
         </div>
         <div id="slotPicker" class="slot-picker"></div>
         <div id="bookingFeedback" class="feedback"></div>
@@ -104,12 +142,22 @@
       <div class="layui-tab-item">
         <div class="toolbar">
           <button class="layui-btn" id="btnTodayPickups">Today's Pickups</button>
-          <button class="layui-btn" id="btnCheckIn">Check-in Booking #1</button>
+          <button class="layui-btn" id="btnCheckIn">Check-in Selected Booking</button>
           <button class="layui-btn layui-btn-normal" id="btnSweepNoShow">Run No-show Sweep</button>
-          <button class="layui-btn" id="btnDispatchNote">Print Dispatch #1</button>
+          <button class="layui-btn" id="btnDispatchNote">Print Dispatch (Selected)</button>
           <button class="layui-btn" id="btnLoadModules">Load Homepage Modules</button>
-          <button class="layui-btn" id="btnSaveModule">Save Carousel Module</button>
-          <button class="layui-btn" id="btnSaveTemplate">Save Message Template</button>
+          <button class="layui-btn" id="btnSaveModule">Save Module</button>
+          <button class="layui-btn" id="btnSaveTemplate">Save Template</button>
+        </div>
+        <div class="search-panel">
+          <input id="moduleKey" placeholder="module key" />
+          <input id="moduleTitle" placeholder="module title" />
+          <input id="moduleBannerImage" placeholder="module banner image" />
+          <input id="moduleBannerLink" placeholder="module banner link" />
+          <input id="templateCode" placeholder="template code" />
+          <input id="templateTitle" placeholder="template title" />
+          <input id="templateContent" placeholder="template content" />
+          <input id="templateCategory" placeholder="template category" />
         </div>
         <div id="opsFeedback" class="feedback"></div>
         <table class="layui-table" id="opsTable"></table>
@@ -125,10 +173,21 @@
         </div>
         <div class="toolbar">
           <button class="layui-btn" id="btnIssueReauth">Issue Reauth</button>
-          <button class="layui-btn" id="btnRepairIssue">Repair Issue #1</button>
+          <button class="layui-btn" id="btnRepairIssue">Repair Issue</button>
           <button class="layui-btn" id="btnCloseBatch">Close Batch</button>
-          <button class="layui-btn" id="btnRefund">Refund PAY-REF</button>
-          <button class="layui-btn" id="btnAdjust">Adjust PAY-REF</button>
+          <button class="layui-btn" id="btnRefund">Refund Payment</button>
+          <button class="layui-btn" id="btnAdjust">Adjust Payment</button>
+        </div>
+        <div class="search-panel">
+          <input id="paymentAmount" type="number" step="0.01" min="0.01" placeholder="payment amount" />
+          <input id="paymentMethod" placeholder="payment method" />
+          <input id="payerName" placeholder="payer name" />
+          <input id="gatewayOrderAmount" type="number" step="0.01" min="0.01" placeholder="gateway order amount" />
+          <input id="reconIssueId" type="number" min="1" placeholder="issue id" />
+          <input id="reconRepairNote" placeholder="repair note" />
+          <input id="paymentRefInput" placeholder="payment ref for refund/adjust" />
+          <input id="adjustAmount" type="number" step="0.01" placeholder="adjust amount" />
+          <input id="adjustReason" placeholder="adjust reason" />
         </div>
         <div id="financeFeedback" class="feedback"></div>
         <table class="layui-table" id="paymentsTable"></table>
@@ -142,6 +201,14 @@
           <button class="layui-btn" id="btnLoadInbox">Inbox</button>
           <button class="layui-btn" id="btnMsgAnalytics">Read/Click Analytics</button>
         </div>
+        <div class="search-panel">
+          <input id="eventType" placeholder="event type" />
+          <input id="eventChannel" placeholder="event channel" />
+          <input id="messageUserId" type="number" min="1" placeholder="recipient user id" />
+          <input id="messageTitle" placeholder="message title" />
+          <input id="messageBody" placeholder="message body" />
+          <select id="messageMarketing"><option value="1">Marketing</option><option value="0">Transactional</option></select>
+        </div>
         <div id="msgFeedback" class="feedback"></div>
         <table class="layui-table" id="eventsTable"></table>
       </div>
@@ -149,10 +216,23 @@
       <div class="layui-tab-item">
         <div class="toolbar">
           <button class="layui-btn" id="btnLoadFiles">Load Files</button>
-          <button class="layui-btn" id="btnUploadMockFile">Upload Mock PDF</button>
+          <button class="layui-btn" id="btnUploadMockFile">Upload File</button>
           <button class="layui-btn" id="btnSignFile">Signed URL (Selected)</button>
           <button class="layui-btn" id="btnCleanupFiles">Run 180-day Cleanup</button>
           <input id="fileSelectedId" placeholder="selected file id" />
+        </div>
+        <div class="search-panel">
+          <input id="fileName" placeholder="filename" />
+          <select id="fileMimeType">
+            <option value="application/pdf">application/pdf</option>
+            <option value="image/png">image/png</option>
+            <option value="image/jpeg">image/jpeg</option>
+            <option value="text/csv">text/csv</option>
+          </select>
+          <textarea id="fileContent" placeholder="plain content for csv or base64 override"></textarea>
+          <input id="fileOwnerType" placeholder="owner type" />
+          <input id="fileOwnerId" type="number" min="0" placeholder="owner id (optional)" />
+          <select id="fileWatermark"><option value="0">No watermark</option><option value="1">Watermark image</option></select>
         </div>
         <div id="fileFeedback" class="feedback"></div>
         <table class="layui-table" id="filesTable"></table>

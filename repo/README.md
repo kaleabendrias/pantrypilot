@@ -54,6 +54,18 @@ What it does:
 
 No local PHP/node tooling is required; tests run inside containers.
 
+## Operator UI Inputs (No Hardcoded Record Values)
+
+- Booking flow now requires explicit operator inputs for pickup point (API-loaded select or manual ID), slot window/date, ZIP+4, region, coordinates, and quantity.
+- Recipe create, operations module/template save, payment/reconciliation actions, notification send, and file upload now use form-provided values (with validation) instead of fixed demo payload assumptions.
+- Button labels no longer imply fixed record IDs (for example `#1`/`PAY-REF`).
+- Pickup point options are loaded from `GET /api/v1/bookings/pickup-points` at runtime.
+
+Optional deterministic UI defaults for test/demo sessions are isolated behind explicit test path:
+
+- `frontend/test-config/ui-defaults.json`
+- enabled only when opening UI with `?ui_test_defaults=1` (not used in normal production UI logic)
+
 ## Verification Checklist
 
 Use this checklist after `docker compose up` and `./run_tests.sh`.
@@ -171,6 +183,17 @@ Expected PASS lines (data isolation + IDOR-style protections):
 - `Scoped user cannot generate signed URL for foreign file`
 - `IDOR blocked: scoped user cannot mark-read admin message`
 - `IDOR blocked: scoped user cannot read foreign dispatch note`
+
+## Hardcoded Value Refactor Map
+
+- Pickup point IDs -> runtime `pickup-points` API select (`frontend/assets/js/app.js`, `frontend/index.html`)
+- ZIP/region/coordinates -> operator booking form inputs with validation (`frontend/index.html`, `frontend/assets/js/app.js`)
+- Recipe create payload fields (timing/servings/difficulty/calories/cost/status) -> operator form inputs (`frontend/index.html`, `frontend/assets/js/app.js`)
+- Operations module banner/template category fields -> operator form inputs (`frontend/index.html`, `frontend/assets/js/app.js`)
+- Recipient `user_id` for notifications -> operator input + scoped auth enforcement (`frontend/index.html`, `frontend/assets/js/app.js`, backend notification service)
+- Payment refs, gateway amount, adjustment fields, and reconciliation issue/note -> operator input or row selection (`frontend/index.html`, `frontend/assets/js/app.js`)
+- File upload sample payload assumptions -> MIME-aware generated payload or operator-provided content (`frontend/assets/js/app.js`)
+- Fixed-ID button text -> neutral selected/input-based labels (`frontend/index.html`)
 
 These changes preserve offline-first behavior while tightening deterministic, auditable controls required for local deployment security/compliance.
 

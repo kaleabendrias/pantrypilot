@@ -1,16 +1,66 @@
 const API_BASE = "/api/v1";
 const PENDING_QUEUE_KEY = "pantrypilot_offline_queue";
 const AUTH_TOKEN_KEY = "pantrypilot_auth_token";
+const UI_DEFAULTS_KEY = "pantrypilot_ui_defaults";
 
 const stateEl = document.getElementById("syncState");
 const authStateEl = document.getElementById("authState");
 
 let latestBatchRef = "";
 let latestReauthToken = "";
-let selectedRecipeId = 1;
+let selectedRecipeId = 0;
 let selectedSlot = null;
 let selectedBookingId = 0;
 let selectedFileId = 0;
+let selectedPaymentRef = "";
+let pickupPointsCache = [];
+let explicitTestDefaults = null;
+
+function getUiDefaults() {
+  if (explicitTestDefaults && typeof explicitTestDefaults === "object") return explicitTestDefaults;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(UI_DEFAULTS_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveUiDefaults(next) {
+  if (explicitTestDefaults) return;
+  localStorage.setItem(UI_DEFAULTS_KEY, JSON.stringify(next));
+}
+
+async function loadExplicitTestDefaults() {
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get("ui_test_defaults") !== "1") return;
+  try {
+    const resp = await fetch("/test-config/ui-defaults.json", { cache: "no-store" });
+    if (!resp.ok) return;
+    const parsed = await resp.json();
+    if (parsed && typeof parsed === "object") {
+      explicitTestDefaults = parsed;
+    }
+  } catch {
+    explicitTestDefaults = null;
+  }
+}
+
+function inputValue(id) {
+  const el = document.getElementById(id);
+  return el ? String(el.value || "").trim() : "";
+}
+
+function numberInput(id, required = false) {
+  const v = inputValue(id);
+  if (!v) {
+    if (required) throw new Error(`${id} is required`);
+    return null;
+  }
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${id} must be numeric`);
+  return n;
+}
 
 function getToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY) || "";
@@ -24,6 +74,141 @@ function setToken(token) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     authStateEl.textContent = "Not authenticated";
   }
+}
+
+function applyInitialDefaults() {
+  const defaults = getUiDefaults();
+  const map = {
+    username: defaults.username || "",
+    bookingZip4: defaults.booking_zip4 || "",
+    bookingRegionCode: defaults.booking_region_code || "",
+    bookingLatitude: defaults.booking_latitude || "",
+    bookingLongitude: defaults.booking_longitude || "",
+    messageUserId: defaults.message_user_id || "",
+    paymentRefInput: defaults.payment_ref || "",
+    reconIssueId: defaults.recon_issue_id || "",
+    reconRepairNote: defaults.recon_repair_note || "",
+    pickupPointManual: defaults.pickup_point_id || "",
+    slotDate: defaults.slot_date || "",
+    slotWindowStart: defaults.slot_window_start || "",
+    slotWindowEnd: defaults.slot_window_end || "",
+    slotStepMinutes: defaults.slot_step_minutes || "",
+    bookingQuantity: defaults.booking_quantity || "",
+    moduleKey: defaults.module_key || "",
+    moduleTitle: defaults.module_title || "",
+    moduleBannerImage: defaults.module_banner_image || "",
+    moduleBannerLink: defaults.module_banner_link || "",
+    templateCode: defaults.template_code || "",
+    templateTitle: defaults.template_title || "",
+    templateContent: defaults.template_content || "",
+    templateCategory: defaults.template_category || "",
+    paymentAmount: defaults.payment_amount || "",
+    paymentMethod: defaults.payment_method || "",
+    payerName: defaults.payer_name || "",
+    gatewayOrderAmount: defaults.gateway_order_amount || "",
+    adjustAmount: defaults.adjust_amount || "",
+    adjustReason: defaults.adjust_reason || "",
+    eventType: defaults.event_type || "",
+    eventChannel: defaults.event_channel || "",
+    messageTitle: defaults.message_title || "",
+    messageBody: defaults.message_body || "",
+    fileName: defaults.file_name || "",
+    fileOwnerType: defaults.file_owner_type || "",
+    recipePrepMinutes: defaults.recipe_prep_minutes || "",
+    recipeStepCount: defaults.recipe_step_count || "",
+    recipeServings: defaults.recipe_servings || "",
+    recipeDifficultyCreate: defaults.recipe_difficulty || "",
+    recipeCalories: defaults.recipe_calories || "",
+    recipeEstimatedCost: defaults.recipe_estimated_cost || "",
+    recipeStatus: defaults.recipe_status || "",
+  };
+  Object.entries(map).forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && value) el.value = value;
+  });
+
+  if (!inputValue("slotDate")) {
+    const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
+    const y = tomorrow.getFullYear();
+    const m = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const d = String(tomorrow.getDate()).padStart(2, "0");
+    const el = document.getElementById("slotDate");
+    if (el) el.value = `${y}-${m}-${d}`;
+  }
+}
+
+function persistOperationalDefaults() {
+  const defaults = getUiDefaults();
+  const next = {
+    ...defaults,
+    username: inputValue("username"),
+    booking_zip4: inputValue("bookingZip4"),
+    booking_region_code: inputValue("bookingRegionCode"),
+    booking_latitude: inputValue("bookingLatitude"),
+    booking_longitude: inputValue("bookingLongitude"),
+    message_user_id: inputValue("messageUserId"),
+    payment_ref: inputValue("paymentRefInput"),
+    recon_issue_id: inputValue("reconIssueId"),
+    recon_repair_note: inputValue("reconRepairNote"),
+    pickup_point_id: inputValue("pickupPointManual") || inputValue("pickupPointSelect"),
+    slot_date: inputValue("slotDate"),
+    slot_window_start: inputValue("slotWindowStart"),
+    slot_window_end: inputValue("slotWindowEnd"),
+    slot_step_minutes: inputValue("slotStepMinutes"),
+    booking_quantity: inputValue("bookingQuantity"),
+    module_key: inputValue("moduleKey"),
+    module_title: inputValue("moduleTitle"),
+    module_banner_image: inputValue("moduleBannerImage"),
+    module_banner_link: inputValue("moduleBannerLink"),
+    template_code: inputValue("templateCode"),
+    template_title: inputValue("templateTitle"),
+    template_content: inputValue("templateContent"),
+    template_category: inputValue("templateCategory"),
+    payment_amount: inputValue("paymentAmount"),
+    payment_method: inputValue("paymentMethod"),
+    payer_name: inputValue("payerName"),
+    gateway_order_amount: inputValue("gatewayOrderAmount"),
+    adjust_amount: inputValue("adjustAmount"),
+    adjust_reason: inputValue("adjustReason"),
+    event_type: inputValue("eventType"),
+    event_channel: inputValue("eventChannel"),
+    message_title: inputValue("messageTitle"),
+    message_body: inputValue("messageBody"),
+    file_name: inputValue("fileName"),
+    file_owner_type: inputValue("fileOwnerType"),
+    recipe_prep_minutes: inputValue("recipePrepMinutes"),
+    recipe_step_count: inputValue("recipeStepCount"),
+    recipe_servings: inputValue("recipeServings"),
+    recipe_difficulty: inputValue("recipeDifficultyCreate"),
+    recipe_calories: inputValue("recipeCalories"),
+    recipe_estimated_cost: inputValue("recipeEstimatedCost"),
+    recipe_status: inputValue("recipeStatus"),
+  };
+  saveUiDefaults(next);
+}
+
+async function loadPickupPoints() {
+  const select = document.getElementById("pickupPointSelect");
+  if (!select) return;
+  try {
+    const data = await apiRequest("/bookings/pickup-points");
+    pickupPointsCache = data.items || [];
+    select.innerHTML = `<option value="">Pickup point</option>` + pickupPointsCache
+      .map((p) => `<option value="${p.id}">${p.name || "Point"} (#${p.id})</option>`)
+      .join("");
+    const preferred = inputValue("pickupPointManual");
+    if (preferred) select.value = preferred;
+  } catch {
+    pickupPointsCache = [];
+  }
+}
+
+function resolvePickupPointId() {
+  const fromSelect = Number(inputValue("pickupPointSelect") || 0);
+  if (fromSelect > 0) return fromSelect;
+  const fromManual = Number(inputValue("pickupPointManual") || 0);
+  if (fromManual > 0) return fromManual;
+  throw new Error("Pickup point is required. Select one from API list or enter an ID.");
 }
 
 function getQueue() {
@@ -86,7 +271,7 @@ function renderTable(tableId, rows) {
   table.innerHTML = `<tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr>` +
     rows.map((row) => `<tr>${headers.map((h) => `<td>${row[h] ?? ""}</td>`).join("")}</tr>`).join("");
 
-  if (tableId === "bookingsTable" || tableId === "filesTable") {
+  if (tableId === "bookingsTable" || tableId === "filesTable" || tableId === "paymentsTable") {
     const trs = table.querySelectorAll("tr");
     trs.forEach((tr, idx) => {
       if (idx === 0) return;
@@ -104,6 +289,11 @@ function renderTable(tableId, rows) {
           selectedFileId = Number(source.id || 0);
           const input = document.getElementById("fileSelectedId");
           if (input) input.value = selectedFileId ? String(selectedFileId) : "";
+        }
+        if (tableId === "paymentsTable") {
+          selectedPaymentRef = String(source.payment_ref || "");
+          const input = document.getElementById("paymentRefInput");
+          if (input && selectedPaymentRef) input.value = selectedPaymentRef;
         }
       });
     });
@@ -223,22 +413,38 @@ async function searchRecipes() {
 
 async function loadSlotPicker() {
   const picker = document.getElementById("slotPicker");
-  const slots = [10, 10.5, 11, 11.5, 12];
-  const day = new Date(Date.now() + 24 * 3600 * 1000);
+  const pickupPointId = resolvePickupPointId();
+  const dateRaw = inputValue("slotDate");
+  if (!dateRaw) throw new Error("slotDate is required");
+  const [year, month, day] = dateRaw.split("-").map((v) => Number(v));
+  const startRaw = inputValue("slotWindowStart");
+  const endRaw = inputValue("slotWindowEnd");
+  if (!startRaw || !endRaw) throw new Error("slotWindowStart and slotWindowEnd are required");
+  const stepMinutes = Number(inputValue("slotStepMinutes"));
+  if (!Number.isFinite(stepMinutes) || stepMinutes < 15) throw new Error("slotStepMinutes must be >= 15");
+
+  const [sh, sm] = startRaw.split(":").map((v) => Number(v));
+  const [eh, em] = endRaw.split(":").map((v) => Number(v));
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin <= startMin) throw new Error("slot window end must be later than start");
+
   const cards = [];
-  for (const hour of slots) {
-    const start = new Date(day);
-    start.setHours(Math.floor(hour), hour % 1 ? 30 : 0, 0, 0);
-    const end = new Date(start.getTime() + 30 * 60 * 1000);
+  for (let cursor = startMin; cursor + stepMinutes <= endMin; cursor += stepMinutes) {
+    const start = new Date(year, month - 1, day, 0, 0, 0, 0);
+    start.setMinutes(cursor);
+    const end = new Date(start.getTime() + stepMinutes * 60 * 1000);
     const slotStart = start.toISOString().slice(0, 19).replace("T", " ");
     const slotEnd = end.toISOString().slice(0, 19).replace("T", " ");
     try {
-      const cap = await apiRequest(`/bookings/slot-capacity?pickup_point_id=1&slot_start=${encodeURIComponent(slotStart)}&slot_end=${encodeURIComponent(slotEnd)}`);
+      const cap = await apiRequest(`/bookings/slot-capacity?pickup_point_id=${pickupPointId}&slot_start=${encodeURIComponent(slotStart)}&slot_end=${encodeURIComponent(slotEnd)}`);
       cards.push({ slotStart, slotEnd, remaining: Number(cap.remaining || 0), capacity: Number(cap.capacity || 0) });
     } catch {
       cards.push({ slotStart, slotEnd, remaining: -1, capacity: -1 });
     }
   }
+
+  if (!cards.length) throw new Error("No slots generated. Adjust slot window and step.");
 
   picker.innerHTML = cards.map((slot, idx) => `
     <button class="slot-card ${slot.remaining <= 0 ? "disabled" : ""}" data-idx="${idx}" ${slot.remaining <= 0 ? "disabled" : ""}>
@@ -252,7 +458,7 @@ async function loadSlotPicker() {
       picker.querySelectorAll(".slot-card").forEach((x) => x.classList.remove("active"));
       btn.classList.add("active");
       selectedSlot = cards[Number(btn.dataset.idx || "0")];
-      setFeedback("bookingFeedback", { selected_recipe_id: selectedRecipeId, selected_slot: selectedSlot });
+      setFeedback("bookingFeedback", { selected_recipe_id: selectedRecipeId, pickup_point_id: pickupPointId, selected_slot: selectedSlot });
     });
   });
 }
@@ -295,20 +501,38 @@ function bindEvents() {
 
   document.getElementById("btnCreateRecipe").addEventListener("click", async () => {
     try {
+      const name = inputValue("recipeName");
+      if (!name) throw new Error("recipeName is required");
+      const description = inputValue("recipeDescription");
+      if (!description) throw new Error("recipeDescription is required");
+      const ingredientTerms = inputValue("recipeIngredients").split(",").map((v) => v.trim()).filter(Boolean);
+      const cookwareTerms = inputValue("recipeCookware").split(",").map((v) => v.trim()).filter(Boolean);
+      const allergenTerms = inputValue("recipeAllergens").split(",").map((v) => v.trim()).filter(Boolean);
+      if (!ingredientTerms.length) throw new Error("recipeIngredients is required");
+      if (!cookwareTerms.length) throw new Error("recipeCookware is required");
+      if (!allergenTerms.length) throw new Error("recipeAllergens is required");
+      const prepMinutes = numberInput("recipePrepMinutes", true);
+      const stepCount = numberInput("recipeStepCount", true);
+      const servings = numberInput("recipeServings", true);
+      const calories = numberInput("recipeCalories", true);
+      const estimatedCost = numberInput("recipeEstimatedCost", true);
+      const difficulty = inputValue("recipeDifficultyCreate");
+      if (!difficulty) throw new Error("recipeDifficultyCreate is required");
+      const status = inputValue("recipeStatus");
+      if (!status) throw new Error("recipeStatus is required");
       await apiRequest("/recipes", "POST", {
-        name: `Quick Recipe ${Date.now()}`,
-        description: "Created from kiosk",
-        prep_minutes: 20,
-        step_count: 5,
-        servings: 4,
-        difficulty: "easy",
-        calories: 420,
-        estimated_cost: 12.5,
-        ingredients: ["chickpea", "tomato"],
-        cookware: ["pot"],
-        allergens: ["none"],
-        status: "draft",
-        created_by: 1
+        name,
+        description,
+        prep_minutes: prepMinutes,
+        step_count: stepCount,
+        servings,
+        difficulty,
+        calories,
+        estimated_cost: estimatedCost,
+        ingredients: ingredientTerms,
+        cookware: cookwareTerms,
+        allergens: allergenTerms,
+        status
       });
       layui.layer.msg("Recipe queued/created");
     } catch (e) { layui.layer.msg(e.message); }
@@ -321,6 +545,7 @@ function bindEvents() {
 
   document.getElementById("btnRecipeDetail").addEventListener("click", async () => {
     try {
+      if (!selectedRecipeId) throw new Error("Select a recipe first");
       const data = await apiRequest(`/bookings/recipe/${selectedRecipeId}`);
       setFeedback("bookingFeedback", data);
     } catch (e) { setFeedback("bookingFeedback", e.message); }
@@ -338,20 +563,31 @@ function bindEvents() {
       if (!selectedSlot) {
         throw new Error("Please choose a slot first");
       }
+      const pickupPointId = resolvePickupPointId();
+      if (!selectedRecipeId) throw new Error("Select a recipe first");
       const slotStart = selectedSlot.slotStart;
       const slotEnd = selectedSlot.slotEnd;
+      const quantity = Number(inputValue("bookingQuantity"));
+      if (!Number.isFinite(quantity) || quantity < 1) throw new Error("bookingQuantity must be >= 1");
+      const zip4 = inputValue("bookingZip4");
+      const region = inputValue("bookingRegionCode");
+      const latitude = inputValue("bookingLatitude");
+      const longitude = inputValue("bookingLongitude");
+      if (!zip4 || !region || !latitude || !longitude) {
+        throw new Error("bookingZip4, bookingRegionCode, bookingLatitude and bookingLongitude are required");
+      }
       const data = await apiRequest("/bookings", "POST", {
         recipe_id: selectedRecipeId,
-        pickup_point_id: 1,
+        pickup_point_id: pickupPointId,
         pickup_at: slotStart,
         slot_start: slotStart,
         slot_end: slotEnd,
-        quantity: 1,
-        customer_zip4: "12345-6789",
-        customer_region_code: "REG-001",
-        customer_latitude: 40.7128,
-        customer_longitude: -74.006,
-        note: "Kiosk booking"
+        quantity,
+        customer_zip4: zip4,
+        customer_region_code: region,
+        customer_latitude: Number(latitude),
+        customer_longitude: Number(longitude),
+        note: inputValue("bookingNote")
       });
       setFeedback("bookingFeedback", data);
       layui.layer.msg("Booking queued/created");
@@ -392,21 +628,37 @@ function bindEvents() {
   });
   document.getElementById("btnSaveModule").addEventListener("click", async () => {
     try {
+      const moduleKey = inputValue("moduleKey");
+      if (!moduleKey) throw new Error("moduleKey is required");
+      const moduleTitle = inputValue("moduleTitle");
+      const moduleBannerImage = inputValue("moduleBannerImage");
+      const moduleBannerLink = inputValue("moduleBannerLink");
+      if (!moduleTitle || !moduleBannerImage || !moduleBannerLink) {
+        throw new Error("moduleTitle, moduleBannerImage and moduleBannerLink are required");
+      }
       const data = await apiRequest("/operations/homepage-modules", "POST", {
-        module_key: "carousel_banners",
+        module_key: moduleKey,
         enabled: 1,
-        banners: [{ title: "Fresh Picks", image: "banner-1.png", link: "/recipes" }]
+        banners: [{ title: moduleTitle, image: moduleBannerImage, link: moduleBannerLink }]
       });
       setFeedback("opsFeedback", data);
     } catch (e) { setFeedback("opsFeedback", e.message); }
   });
   document.getElementById("btnSaveTemplate").addEventListener("click", async () => {
     try {
+      const templateCode = inputValue("templateCode");
+      if (!templateCode) throw new Error("templateCode is required");
+      const templateTitle = inputValue("templateTitle");
+      const templateContent = inputValue("templateContent");
+      const templateCategory = inputValue("templateCategory");
+      if (!templateTitle || !templateContent || !templateCategory) {
+        throw new Error("templateTitle, templateContent and templateCategory are required");
+      }
       const data = await apiRequest("/operations/message-templates", "POST", {
-        template_code: "PROMO_DAILY",
-        title: "Daily Promo",
-        content: "Your local pantry has fresh offers.",
-        category: "marketing",
+        template_code: templateCode,
+        title: templateTitle,
+        content: templateContent,
+        category: templateCategory,
         active: 1
       });
       setFeedback("opsFeedback", data);
@@ -422,12 +674,16 @@ function bindEvents() {
     try {
       const bookingId = Number(document.getElementById("bookingSelectedId").value || selectedBookingId || 0);
       if (!bookingId) throw new Error("Select a booking row first or enter a booking id");
+      const amount = numberInput("paymentAmount", true);
+      const method = inputValue("paymentMethod");
+      const payerName = inputValue("payerName");
+      if (!method || !payerName) throw new Error("paymentMethod and payerName are required");
       await apiRequest("/payments", "POST", {
         booking_id: bookingId,
-        amount: 12.5,
-        method: "cash",
+        amount,
+        method,
         status: "captured",
-        payer_name: "Local Customer"
+        payer_name: payerName
       });
       layui.layer.msg("Payment queued/created");
     } catch (e) { layui.layer.msg(e.message); }
@@ -437,7 +693,8 @@ function bindEvents() {
     try {
       const bookingId = Number(document.getElementById("bookingSelectedId").value || selectedBookingId || 0);
       if (!bookingId) throw new Error("Select a booking row first or enter a booking id");
-      const data = await apiRequest("/payments/gateway/orders", "POST", { booking_id: bookingId, amount: 11.2 });
+      const amount = numberInput("gatewayOrderAmount", true);
+      const data = await apiRequest("/payments/gateway/orders", "POST", { booking_id: bookingId, amount });
       setFeedback("financeFeedback", data);
     } catch (e) { setFeedback("financeFeedback", e.message); }
   });
@@ -460,9 +717,13 @@ function bindEvents() {
   });
   document.getElementById("btnRepairIssue").addEventListener("click", async () => {
     try {
+      const issueId = Number(inputValue("reconIssueId") || 0);
+      if (!issueId) throw new Error("reconIssueId is required");
+      const note = inputValue("reconRepairNote");
+      if (!note) throw new Error("reconRepairNote is required");
       const data = await apiRequest("/payments/reconcile/repair", "POST", {
-        issue_id: 1,
-        note: "manual repair",
+        issue_id: issueId,
+        note,
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
@@ -479,8 +740,10 @@ function bindEvents() {
   });
   document.getElementById("btnRefund").addEventListener("click", async () => {
     try {
+      const paymentRef = inputValue("paymentRefInput") || selectedPaymentRef;
+      if (!paymentRef) throw new Error("paymentRefInput is required");
       const data = await apiRequest("/payments/refund", "POST", {
-        payment_ref: "PAY-REF",
+        payment_ref: paymentRef,
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
@@ -488,10 +751,15 @@ function bindEvents() {
   });
   document.getElementById("btnAdjust").addEventListener("click", async () => {
     try {
+      const paymentRef = inputValue("paymentRefInput") || selectedPaymentRef;
+      if (!paymentRef) throw new Error("paymentRefInput is required");
+      const amount = numberInput("adjustAmount", true);
+      const reason = inputValue("adjustReason");
+      if (!reason) throw new Error("adjustReason is required");
       const data = await apiRequest("/payments/adjust", "POST", {
-        payment_ref: "PAY-REF",
-        amount: -1.5,
-        reason: "manual adjustment",
+        payment_ref: paymentRef,
+        amount,
+        reason,
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
@@ -503,20 +771,32 @@ function bindEvents() {
     renderTable("eventsTable", data.items || []);
   });
   document.getElementById("btnQueueEvent").addEventListener("click", async () => {
-    await apiRequest("/notifications/events", "POST", {
-      event_type: "booking.created",
-      channel: "kiosk",
-      payload: { source: "web", created_at: new Date().toISOString() }
-    });
-    layui.layer.msg("Event queued");
+    try {
+      const eventType = inputValue("eventType");
+      const eventChannel = inputValue("eventChannel");
+      if (!eventType || !eventChannel) throw new Error("eventType and eventChannel are required");
+      await apiRequest("/notifications/events", "POST", {
+        event_type: eventType,
+        channel: eventChannel,
+        payload: { source: eventChannel, created_at: new Date().toISOString() }
+      });
+      layui.layer.msg("Event queued");
+    } catch (e) {
+      setFeedback("msgFeedback", e.message);
+    }
   });
   document.getElementById("btnSendMarketing").addEventListener("click", async () => {
     try {
+      const userId = Number(inputValue("messageUserId") || 0);
+      if (!userId) throw new Error("messageUserId is required");
+      const title = inputValue("messageTitle");
+      const body = inputValue("messageBody");
+      if (!title || !body) throw new Error("messageTitle and messageBody are required");
       const data = await apiRequest("/notifications/messages", "POST", {
-        user_id: 1,
-        title: "Weekend special",
-        body: "Save 10% this weekend",
-        is_marketing: true
+        user_id: userId,
+        title,
+        body,
+        is_marketing: inputValue("messageMarketing") !== "0"
       });
       setFeedback("msgFeedback", data);
     } catch (e) { setFeedback("msgFeedback", e.message); }
@@ -531,14 +811,39 @@ function bindEvents() {
   });
 
   document.getElementById("btnUploadMockFile").addEventListener("click", async () => {
-    const pdf = btoa("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n");
-    const data = await apiRequest("/files/upload-base64", "POST", {
-      filename: "dispatch.pdf",
-      mime_type: "application/pdf",
-      content_base64: pdf,
-      watermark: true
-    });
-    setFeedback("fileFeedback", data);
+    try {
+      const mimeType = inputValue("fileMimeType");
+      if (!mimeType) throw new Error("fileMimeType is required");
+      const filename = inputValue("fileName") || (mimeType === "text/csv" ? "upload.csv" : "upload.pdf");
+      const ownerType = inputValue("fileOwnerType");
+      if (!ownerType) throw new Error("fileOwnerType is required");
+      const ownerId = Number(inputValue("fileOwnerId") || 0);
+      const watermark = inputValue("fileWatermark") === "1";
+      const manualContent = inputValue("fileContent");
+
+      let contentBase64 = "";
+      if (manualContent) {
+        contentBase64 = btoa(unescape(encodeURIComponent(manualContent)));
+      } else if (mimeType === "application/pdf") {
+        contentBase64 = btoa("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n");
+      } else if (mimeType === "text/csv") {
+        contentBase64 = btoa("id,name\n1,example\n");
+      } else if (mimeType === "image/png") {
+        contentBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+Lw0AAAAASUVORK5CYII=";
+      } else if (mimeType === "image/jpeg") {
+        contentBase64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUXFhUVFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGhAQGi0lHyUtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAQMBIgACEQEDEQH/xAAXAAADAQAAAAAAAAAAAAAAAAAAAQID/8QAFhEBAQEAAAAAAAAAAAAAAAAAAQAC/9oADAMBAAIQAxAAAAG2gP/EABcQAAMBAAAAAAAAAAAAAAAAAAABESL/2gAIAQEAAQUCyf/EABURAQEAAAAAAAAAAAAAAAAAABAR/9oACAEDAQE/Acf/xAAVEQEBAAAAAAAAAAAAAAAAAAAQEf/aAAgBAgEBPwGH/8QAFhABAQEAAAAAAAAAAAAAAAAAABEQ/9oACAEBAAY/Amf/xAAWEAEBAQAAAAAAAAAAAAAAAAABABH/2gAIAQEAAT8hY//aAAwDAQACAAMAAAAQ8//EABYRAQEBAAAAAAAAAAAAAAAAAAARAf/aAAgBAwEBPxBf/8QAFhEBAQEAAAAAAAAAAAAAAAAAABEB/9oACAECAQE/EDf/xAAWEAEBAQAAAAAAAAAAAAAAAAABABH/2gAIAQEAAT8QW3//2Q==";
+      } else {
+        throw new Error("Unsupported mime type for generated content");
+      }
+
+      const payload = { filename, mime_type: mimeType, content_base64: contentBase64, watermark };
+      if (ownerType) payload.owner_type = ownerType;
+      if (ownerId > 0) payload.owner_id = ownerId;
+      const data = await apiRequest("/files/upload-base64", "POST", payload);
+      setFeedback("fileFeedback", data);
+    } catch (e) {
+      setFeedback("fileFeedback", e.message);
+    }
   });
   document.getElementById("btnLoadFiles").addEventListener("click", async () => {
     const data = await apiRequest("/files");
@@ -591,17 +896,33 @@ function bindEvents() {
     const resources = await apiRequest("/admin/resources");
     setFeedback("adminFeedback", { permissions: perms.items || [], resources: resources.items || [] });
   });
+
+  [
+    "username", "bookingZip4", "bookingRegionCode", "bookingLatitude", "bookingLongitude",
+    "messageUserId", "paymentRefInput", "reconIssueId", "reconRepairNote", "pickupPointManual", "pickupPointSelect", "slotDate",
+    "slotWindowStart", "slotWindowEnd", "slotStepMinutes", "bookingQuantity", "moduleKey", "moduleTitle", "moduleBannerImage",
+    "moduleBannerLink", "templateCode", "templateTitle", "templateContent", "templateCategory", "paymentAmount", "paymentMethod",
+    "payerName", "gatewayOrderAmount", "adjustAmount", "adjustReason", "eventType", "eventChannel", "messageTitle", "messageBody",
+    "fileName", "fileOwnerType", "recipePrepMinutes", "recipeStepCount", "recipeServings", "recipeDifficultyCreate", "recipeCalories",
+    "recipeEstimatedCost", "recipeStatus"
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", persistOperationalDefaults);
+  });
 }
 
 layui.use([], async () => {
   setQueue(getQueue());
   if (getToken()) authStateEl.textContent = "Authenticated";
+  await loadExplicitTestDefaults();
+  applyInitialDefaults();
   bindEvents();
-  await loadSlotPicker();
+  await loadPickupPoints();
+  try { await loadSlotPicker(); } catch (e) { setFeedback("bookingFeedback", e.message); }
   await apiRequest("/recipes").then((data) => {
     const items = data.items || [];
     if (items.length > 0) {
-      selectedRecipeId = Number(items[0].id || 1);
+      selectedRecipeId = Number(items[0].id || 0);
       renderRecipeGrid(items);
     }
   }).catch(() => {});

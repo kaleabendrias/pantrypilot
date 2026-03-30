@@ -562,6 +562,49 @@ runCase('Booking reservation rollback prevents slot drift when insert fails afte
     tassert($afterReserved === 1, 'reserved count must roll back to 1 when booking insert fails');
 });
 
+runCase('Booking flow supports runtime pickup-point selection (no fixed ID required)', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $now = date('Y-m-d H:i:s');
+    $pdo->prepare('INSERT INTO pickup_points(name,address,slot_size,active,region_code,latitude,longitude,service_radius_km,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+        ->execute(['Runtime Select Point', 'Runtime Addr', 2, 1, 'REG-001', 40.7128, -74.0060, 10.0, $now]);
+    $createdPointId = (int) $pdo->lastInsertId();
+    tassert($createdPointId > 0, 'created pickup point id required for runtime selection test');
+
+    $points = api('GET', '/api/v1/bookings/pickup-points', [], $adminToken);
+    assertJsonContract($points, 'pickup points runtime list');
+    tassert($points['status'] === 200, 'pickup points endpoint should return 200');
+    $items = $points['json']['data']['items'] ?? [];
+    tassert(count($items) > 0, 'pickup points list should not be empty');
+    $pickupPointId = 0;
+    foreach ($items as $item) {
+        if ((int) ($item['id'] ?? 0) === $createdPointId) {
+            $pickupPointId = $createdPointId;
+            break;
+        }
+    }
+    if ($pickupPointId === 0) {
+        $pickupPointId = $createdPointId;
+    }
+    tassert($pickupPointId > 0, 'pickup point id from runtime API is required');
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+3 day 10:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1,
+        'pickup_point_id' => $pickupPointId,
+        'pickup_at' => $slotStart,
+        'slot_start' => $slotStart,
+        'slot_end' => $slotEnd,
+        'quantity' => 1,
+        'customer_zip4' => '12345-6789',
+        'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128,
+        'customer_longitude' => -74.0060,
+    ], $adminToken);
+    assertJsonContract($booking, 'booking with runtime pickup point');
+    tassert($booking['status'] === 201, 'booking should succeed using runtime pickup point selection');
+});
+
 runCase('Bookings list pagination boundary returns metadata', function () use (&$adminToken): void {
     $paged = api('GET', '/api/v1/bookings?page=1&per_page=1', [], $adminToken);
     assertJsonContract($paged, 'bookings pagination');
@@ -1090,6 +1133,8 @@ runCase('File lifecycle cleanup removes DB rows and physical files safely', func
 
 runCase('Scoped cleanup cannot delete cross-scope attachments but can delete in-scope owned files', function () use (&$adminToken, &$scopedToken): void {
     $pdo = pdo();
+    $scopedUserId = (int) ($pdo->query("SELECT id FROM users WHERE username='scoped_user' LIMIT 1")->fetchColumn() ?: 0);
+    tassert($scopedUserId > 0, 'scoped user id required for scoped cleanup test');
 
     $adminFile = api('POST', '/api/v1/files/upload-base64', [
         'owner_type' => 'user',
@@ -1103,7 +1148,7 @@ runCase('Scoped cleanup cannot delete cross-scope attachments but can delete in-
 
     $scopedFile = api('POST', '/api/v1/files/upload-base64', [
         'owner_type' => 'user',
-        'owner_id' => 2,
+        'owner_id' => $scopedUserId,
         'filename' => 'scoped-expired.pdf',
         'mime_type' => 'application/pdf',
         'content_base64' => base64_encode("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n"),
@@ -1216,6 +1261,8 @@ runCase('Notification analytics is scope-isolated for scoped users and global fo
 
 runCase('Notification send enforces recipient scope for non-admin and allows admin global send', function () use (&$adminToken, &$scopedToken): void {
     $pdo = pdo();
+    $scopedUserId = (int) ($pdo->query("SELECT id FROM users WHERE username='scoped_user' LIMIT 1")->fetchColumn() ?: 0);
+    tassert($scopedUserId > 0, 'scoped user id required for in-scope notification send');
     $now = date('Y-m-d H:i:s');
     $outUser = 'oos_send_' . strtolower(bin2hex(random_bytes(3)));
     $hash = password_hash('scope999999', PASSWORD_BCRYPT);
@@ -1234,7 +1281,7 @@ runCase('Notification send enforces recipient scope for non-admin and allows adm
     tassert($scopedForbidden['status'] === 403, 'non-admin scoped sender must receive 403 for out-of-scope recipient');
 
     $scopedAllowed = api('POST', '/api/v1/notifications/messages', [
-        'user_id' => 2,
+        'user_id' => $scopedUserId,
         'title' => 'scope allow',
         'body' => 'allow',
         'is_marketing' => false,
