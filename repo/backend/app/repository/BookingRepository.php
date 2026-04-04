@@ -60,9 +60,46 @@ final class BookingRepository
         return $bookingId;
     }
 
-    public function pickupPoints(): array
+    public function pickupPoints(array $scopes = [], array $authUser = []): array
     {
-        return Db::name('pickup_points')->where('active', 1)->order('name')->select()->toArray();
+        $query = Db::name('pickup_points')->alias('pp')->where('pp.active', 1)->order('pp.name');
+        if (!\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            $this->applyPickupPointScopes($query, $scopes, $authUser);
+        }
+        return $query->field('pp.*')->select()->toArray();
+    }
+
+    public function pickupPointInScope(int $pickupPointId, array $scopes = [], array $authUser = []): bool
+    {
+        if (\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            return true;
+        }
+        $query = Db::name('pickup_points')->alias('pp')->where('pp.id', $pickupPointId)->where('pp.active', 1);
+        $this->applyPickupPointScopes($query, $scopes, $authUser);
+        return $query->count() > 0;
+    }
+
+    private function applyPickupPointScopes($query, array $scopes, array $authUser): void
+    {
+        $store = $scopes['store'] ?? [];
+        $warehouse = $scopes['warehouse'] ?? [];
+        $department = $scopes['department'] ?? [];
+
+        if ($store !== []) {
+            $query->where(function ($q) use ($store) { $q->whereIn('pp.store_id', $store)->whereOr('pp.store_id', null); });
+        } elseif (!empty($authUser['store_id'])) {
+            $query->where(function ($q) use ($authUser) { $q->where('pp.store_id', (string) $authUser['store_id'])->whereOr('pp.store_id', null); });
+        }
+        if ($warehouse !== []) {
+            $query->where(function ($q) use ($warehouse) { $q->whereIn('pp.warehouse_id', $warehouse)->whereOr('pp.warehouse_id', null); });
+        } elseif (!empty($authUser['warehouse_id'])) {
+            $query->where(function ($q) use ($authUser) { $q->where('pp.warehouse_id', (string) $authUser['warehouse_id'])->whereOr('pp.warehouse_id', null); });
+        }
+        if ($department !== []) {
+            $query->where(function ($q) use ($department) { $q->whereIn('pp.department_id', $department)->whereOr('pp.department_id', null); });
+        } elseif (!empty($authUser['department_id'])) {
+            $query->where(function ($q) use ($authUser) { $q->where('pp.department_id', (string) $authUser['department_id'])->whereOr('pp.department_id', null); });
+        }
     }
 
     public function recipeDetail(int $recipeId): ?array
@@ -82,6 +119,11 @@ final class BookingRepository
     public function recipeExists(int $recipeId): bool
     {
         return Db::name('recipes')->where('id', $recipeId)->count() > 0;
+    }
+
+    public function recipeBookable(int $recipeId): bool
+    {
+        return Db::name('recipes')->where('id', $recipeId)->where('status', 'published')->count() > 0;
     }
 
     public function recipeInScope(int $recipeId, array $scopes = [], array $authUser = []): bool
@@ -229,6 +271,22 @@ final class BookingRepository
 
     public function checkIn(int $bookingId, int $staffId): bool
     {
+        $booking = Db::name('bookings')->where('id', $bookingId)->find();
+        if (!$booking) {
+            throw new \RuntimeException('Booking not found');
+        }
+
+        $status = (string) ($booking['status'] ?? '');
+        if (!in_array($status, ['pending', 'confirmed'], true)) {
+            throw new \RuntimeException('Booking cannot be checked in with status: ' . $status);
+        }
+
+        $slotDate = substr((string) ($booking['slot_start'] ?? $booking['pickup_at'] ?? ''), 0, 10);
+        $today = date('Y-m-d');
+        if ($slotDate !== '' && $slotDate !== $today) {
+            throw new \RuntimeException('Check-in is only allowed on the booking slot date');
+        }
+
         return Db::name('bookings')->where('id', $bookingId)->update([
             'status' => 'arrived',
             'arrived_at' => date('Y-m-d H:i:s'),
@@ -237,13 +295,14 @@ final class BookingRepository
         ]) > 0;
     }
 
-    public function classifyNoShows(string $cutoffTime): array
+    public function classifyNoShows(string $cutoffTime, array $scopes = [], array $authUser = []): array
     {
-        $targets = Db::name('bookings')
-            ->whereIn('status', ['pending', 'confirmed'])
-            ->where('slot_start', '<', $cutoffTime)
-            ->whereNull('arrived_at')
-            ->select()->toArray();
+        $query = Db::name('bookings')->alias('b')
+            ->whereIn('b.status', ['pending', 'confirmed'])
+            ->where('b.slot_start', '<', $cutoffTime)
+            ->whereNull('b.arrived_at');
+        $this->applyDataScopes($query, $scopes, $authUser);
+        $targets = $query->field('b.*')->select()->toArray();
 
         $updated = 0;
         foreach ($targets as $row) {
@@ -310,8 +369,13 @@ final class BookingRepository
 
     public function bookingInScope(int $bookingId, array $scopes = [], array $authUser = []): bool
     {
+        $role = (string) ($authUser['role'] ?? '');
+        if ($role === 'customer') {
+            $row = Db::name('bookings')->where('id', $bookingId)->where('user_id', (int) ($authUser['id'] ?? 0))->find();
+            return $row !== null;
+        }
         $query = Db::name('bookings')->alias('b')->where('b.id', $bookingId);
-        $this->applyDataScopes($query, $scopes, $authUser);
+        \app\service\ScopeHelper::applyStandardScopes($query, 'b', $scopes, $authUser);
         $row = $query->field('b.id')->find();
         return $row !== null;
     }
@@ -323,26 +387,12 @@ final class BookingRepository
 
     private function applyDataScopes($query, array $scopes, array $authUser): void
     {
-        $store = $scopes['store'] ?? [];
-        $warehouse = $scopes['warehouse'] ?? [];
-        $department = $scopes['department'] ?? [];
-
-        if ($store !== []) {
-            $query->whereIn('b.store_id', $store);
-        } elseif (!empty($authUser['store_id'])) {
-            $query->where('b.store_id', $authUser['store_id']);
+        $role = (string) ($authUser['role'] ?? '');
+        if ($role === 'customer') {
+            $query->where('b.user_id', (int) ($authUser['id'] ?? 0));
+            return;
         }
 
-        if ($warehouse !== []) {
-            $query->whereIn('b.warehouse_id', $warehouse);
-        } elseif (!empty($authUser['warehouse_id'])) {
-            $query->where('b.warehouse_id', $authUser['warehouse_id']);
-        }
-
-        if ($department !== []) {
-            $query->whereIn('b.department_id', $department);
-        } elseif (!empty($authUser['department_id'])) {
-            $query->where('b.department_id', $authUser['department_id']);
-        }
+        \app\service\ScopeHelper::applyStandardScopes($query, 'b', $scopes, $authUser);
     }
 }

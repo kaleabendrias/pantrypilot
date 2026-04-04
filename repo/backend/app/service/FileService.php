@@ -36,25 +36,34 @@ final class FileService
             throw new ValidationException('File too large');
         }
 
+        $storagePath = (string) $stored['storage_path'];
         $bytes = (string) ($stored['bytes'] ?? '');
         $magicVerified = $this->verifyMagicBytes($mimeType, $bytes);
         if (!$magicVerified) {
+            $this->fileStorageAdapter->delete($storagePath);
             throw new ValidationException('Magic-byte verification failed');
         }
 
         $watermarked = (bool) ($payload['watermark'] ?? false);
         if ($watermarked) {
             if (!in_array($mimeType, ['image/png', 'image/jpeg'], true)) {
+                $this->fileStorageAdapter->delete($storagePath);
                 throw new ValidationException('Watermarking is only supported for PNG/JPEG images');
             }
-            $bytes = $this->renderImageWatermark($mimeType, $bytes);
+            try {
+                $bytes = $this->renderImageWatermark($mimeType, $bytes);
+            } catch (\Throwable $e) {
+                $this->fileStorageAdapter->delete($storagePath);
+                throw $e;
+            }
             if (!$this->verifyMagicBytes($mimeType, $bytes)) {
+                $this->fileStorageAdapter->delete($storagePath);
                 throw new ValidationException('Watermarked image failed magic-byte verification');
             }
-            file_put_contents($this->fileStorageAdapter->absolutePath($stored['storage_path']), $bytes);
+            file_put_contents($this->fileStorageAdapter->absolutePath($storagePath), $bytes);
             $stored['size_bytes'] = strlen($bytes);
             if ((int) $stored['size_bytes'] > $maxSize) {
-                $this->fileStorageAdapter->delete((string) $stored['storage_path']);
+                $this->fileStorageAdapter->delete($storagePath);
                 throw new ValidationException('File too large');
             }
         }

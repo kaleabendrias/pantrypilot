@@ -56,6 +56,9 @@ final class PaymentRepository
             'actual_total' => $data['actual_total'],
             'variance' => $data['variance'],
             'status' => $data['status'] ?? 'open',
+            'store_id' => $data['store_id'] ?? null,
+            'warehouse_id' => $data['warehouse_id'] ?? null,
+            'department_id' => $data['department_id'] ?? null,
             'created_at' => date('Y-m-d H:i:s'),
         ]);
     }
@@ -117,25 +120,65 @@ final class PaymentRepository
         }
     }
 
-    public function autoCancelExpiredGatewayOrders(): int
+    public function autoCancelExpiredGatewayOrders(array $scopes = [], array $authUser = []): int
     {
+        $query = Db::name('gateway_orders')->alias('go')
+            ->leftJoin('bookings b', 'b.id = go.booking_id')
+            ->where('go.status', 'pending')
+            ->where('go.expire_at', '<', date('Y-m-d H:i:s'));
+        $this->applyBookingScopes($query, $scopes, $authUser);
+        $ids = $query->column('go.id');
+        if (empty($ids)) {
+            return 0;
+        }
         return Db::name('gateway_orders')
-            ->where('status', 'pending')
-            ->where('expire_at', '<', date('Y-m-d H:i:s'))
+            ->whereIn('id', $ids)
             ->update([
                 'status' => 'cancelled',
                 'updated_at' => date('Y-m-d H:i:s'),
             ]);
     }
 
-    public function paidGatewayOrdersByDate(string $date): array
+    public function paidGatewayOrdersByDate(string $date, array $scopes = [], array $authUser = []): array
     {
-        return Db::name('gateway_orders')->where('status', 'paid')->whereDay('updated_at', $date)->select()->toArray();
+        $query = Db::name('gateway_orders')->alias('go')
+            ->leftJoin('bookings b', 'b.id = go.booking_id')
+            ->where('go.status', 'paid')
+            ->whereDay('go.updated_at', $date);
+        $this->applyBookingScopes($query, $scopes, $authUser);
+        return $query->field('go.*')->select()->toArray();
     }
 
-    public function paymentsByDate(string $date): array
+    public function paymentsByDate(string $date, array $scopes = [], array $authUser = []): array
     {
-        return Db::name('payments')->whereDay('created_at', $date)->select()->toArray();
+        $query = Db::name('payments')->alias('p')->whereDay('p.created_at', $date);
+        $this->applyDataScopes($query, $scopes, $authUser);
+        return $query->select()->toArray();
+    }
+
+    private function applyBookingScopes($query, array $scopes, array $authUser): void
+    {
+        $store = $scopes['store'] ?? [];
+        $warehouse = $scopes['warehouse'] ?? [];
+        $department = $scopes['department'] ?? [];
+
+        if ($store !== []) {
+            $query->whereIn('b.store_id', $store);
+        } elseif (!empty($authUser['store_id'])) {
+            $query->where('b.store_id', $authUser['store_id']);
+        }
+
+        if ($warehouse !== []) {
+            $query->whereIn('b.warehouse_id', $warehouse);
+        } elseif (!empty($authUser['warehouse_id'])) {
+            $query->where('b.warehouse_id', $authUser['warehouse_id']);
+        }
+
+        if ($department !== []) {
+            $query->whereIn('b.department_id', $department);
+        } elseif (!empty($authUser['department_id'])) {
+            $query->where('b.department_id', $authUser['department_id']);
+        }
     }
 
     public function addReconciliationIssue(array $data): int
@@ -148,6 +191,44 @@ final class PaymentRepository
             'repaired_note' => $data['repaired_note'] ?? null,
             'created_at' => date('Y-m-d H:i:s'),
         ]);
+    }
+
+    public function listBatches(int $page = 1, int $perPage = 20, array $scopes = [], array $authUser = []): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min($perPage, 200));
+        $query = Db::name('reconciliation')->alias('r')->field('r.*');
+        if (!\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            \app\service\ScopeHelper::applyStandardScopes($query, 'r', $scopes, $authUser);
+        }
+        $total = (int) (clone $query)->count();
+        $items = $query->order('r.id', 'desc')->page($page, $perPage)->select()->toArray();
+        return [
+            'items' => $items,
+            'pagination' => ['page' => $page, 'per_page' => $perPage, 'total' => $total, 'total_pages' => (int) ceil($total / max(1, $perPage))],
+        ];
+    }
+
+    public function listIssues(string $batchRef = '', int $page = 1, int $perPage = 50, array $scopes = [], array $authUser = []): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min($perPage, 200));
+        $query = Db::name('finance_reconciliation_items')->alias('fri')
+            ->leftJoin('gateway_orders g', 'g.order_ref = fri.gateway_order_ref')
+            ->leftJoin('bookings b', 'b.id = g.booking_id')
+            ->field('fri.*');
+        if ($batchRef !== '') {
+            $query->where('fri.batch_ref', $batchRef);
+        }
+        if (!\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            $this->applyBookingScopes($query, $scopes, $authUser);
+        }
+        $total = (int) (clone $query)->count();
+        $items = $query->order('fri.id', 'desc')->page($page, $perPage)->select()->toArray();
+        return [
+            'items' => $items,
+            'pagination' => ['page' => $page, 'per_page' => $perPage, 'total' => $total, 'total_pages' => (int) ceil($total / max(1, $perPage))],
+        ];
     }
 
     public function issuesByBatch(string $batchRef): array
@@ -182,35 +263,13 @@ final class PaymentRepository
 
     public function batchInScope(string $batchRef, array $scopes = [], array $authUser = []): bool
     {
+        if (\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            return Db::name('reconciliation')->where('batch_ref', $batchRef)->count() > 0;
+        }
         $query = Db::name('reconciliation')->alias('r')
-            ->leftJoin('finance_reconciliation_items i', 'i.batch_ref = r.batch_ref')
-            ->leftJoin('gateway_orders g', 'g.order_ref = i.gateway_order_ref')
-            ->leftJoin('bookings b', 'b.id = g.booking_id')
             ->where('r.batch_ref', $batchRef)
             ->field('r.id');
-
-        $store = $scopes['store'] ?? [];
-        $warehouse = $scopes['warehouse'] ?? [];
-        $department = $scopes['department'] ?? [];
-
-        if ($store !== []) {
-            $query->whereIn('b.store_id', $store);
-        } elseif (!empty($authUser['store_id'])) {
-            $query->where('b.store_id', $authUser['store_id']);
-        }
-
-        if ($warehouse !== []) {
-            $query->whereIn('b.warehouse_id', $warehouse);
-        } elseif (!empty($authUser['warehouse_id'])) {
-            $query->where('b.warehouse_id', $authUser['warehouse_id']);
-        }
-
-        if ($department !== []) {
-            $query->whereIn('b.department_id', $department);
-        } elseif (!empty($authUser['department_id'])) {
-            $query->where('b.department_id', $authUser['department_id']);
-        }
-
+        \app\service\ScopeHelper::applyStandardScopes($query, 'r', $scopes, $authUser);
         return $query->find() !== null;
     }
 
@@ -259,6 +318,12 @@ final class PaymentRepository
         }
 
         return $query->find() !== null;
+    }
+
+    public function bookingScopeById(int $bookingId): ?array
+    {
+        $row = Db::name('bookings')->where('id', $bookingId)->field('store_id,warehouse_id,department_id')->find();
+        return $row ?: null;
     }
 
     public function markRefunded(int $paymentId): bool

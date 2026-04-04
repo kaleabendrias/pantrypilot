@@ -5,6 +5,7 @@ namespace app\service;
 
 use app\domain\identity\LoginLockPolicy;
 use app\domain\identity\PasswordPolicy;
+use app\repository\AuthorizationRepository;
 use app\repository\AuthSessionRepository;
 use app\repository\IdentityRepository;
 use think\facade\Log;
@@ -17,7 +18,8 @@ final class IdentityService
         private readonly LoginLockPolicy $loginLockPolicy,
         private readonly AuthTokenService $authTokenService,
         private readonly AuthSessionRepository $authSessionRepository,
-        private readonly CryptoService $cryptoService
+        private readonly CryptoService $cryptoService,
+        private readonly AuthorizationRepository $authorizationRepository = new AuthorizationRepository()
     )
     {
     }
@@ -40,10 +42,12 @@ final class IdentityService
             'username' => $payload['username'],
             'display_name' => $payload['display_name'] ?? $payload['username'],
             'password_hash' => password_hash($payload['password'], PASSWORD_BCRYPT),
-            'role' => $payload['role'] ?? 'staff',
+            'role' => 'customer',
             'phone_enc' => $this->cryptoService->encrypt((string) ($payload['phone'] ?? '')),
             'address_enc' => $this->cryptoService->encrypt((string) ($payload['address'] ?? '')),
         ]);
+
+        $this->identityRepository->assignRoleByCode($id, 'customer');
 
         return ['id' => $id];
     }
@@ -90,13 +94,18 @@ final class IdentityService
 
         Log::info('identity.login.success', ['user_id' => (int) $user['id'], 'username' => $username, 'ip' => $ip]);
 
+        $assignedRole = $this->authorizationRepository->assignedRoleCode((int) $user['id']);
+        $effectiveRole = $assignedRole ?: (string) $user['role'];
+        $grants = $this->authorizationRepository->grantKeys((int) $user['id']);
+
         return [
             'token' => $token,
             'user' => [
                 'id' => $user['id'],
                 'username' => $user['username'],
                 'display_name' => $user['display_name'],
-                'role' => $user['role'],
+                'role' => $effectiveRole,
+                'permissions' => $grants,
             ],
         ];
     }
@@ -121,11 +130,14 @@ final class IdentityService
             return null;
         }
 
+        $assignedRole = $this->authorizationRepository->assignedRoleCode((int) $user['id']);
+        $effectiveRole = $assignedRole ?: (string) $user['role'];
+
         return [
             'id' => (int) $user['id'],
             'username' => (string) $user['username'],
             'display_name' => (string) $user['display_name'],
-            'role' => (string) $user['role'],
+            'role' => $effectiveRole,
             'store_id' => (string) ($user['store_id'] ?? ''),
             'warehouse_id' => (string) ($user['warehouse_id'] ?? ''),
             'department_id' => (string) ($user['department_id'] ?? ''),

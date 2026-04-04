@@ -57,6 +57,16 @@ final class PaymentService
         return ['id' => $id, 'payment_ref' => $payload['payment_ref']];
     }
 
+    public function listBatches(int $page = 1, int $perPage = 20, array $scopes = [], array $authUser = []): array
+    {
+        return $this->paymentRepository->listBatches($page, $perPage, $scopes, $authUser);
+    }
+
+    public function listIssues(string $batchRef = '', int $page = 1, int $perPage = 50, array $scopes = [], array $authUser = []): array
+    {
+        return $this->paymentRepository->listIssues($batchRef, $page, $perPage, $scopes, $authUser);
+    }
+
     public function reconcile(array $payload): array
     {
         $payload['batch_ref'] = $payload['batch_ref'] ?? 'REC-' . strtoupper(bin2hex(random_bytes(3)));
@@ -86,9 +96,9 @@ final class PaymentService
         ];
     }
 
-    public function autoCancelExpiredGatewayOrders(): array
+    public function autoCancelExpiredGatewayOrders(array $scopes = [], array $authUser = []): array
     {
-        $count = $this->paymentRepository->autoCancelExpiredGatewayOrders();
+        $count = $this->paymentRepository->autoCancelExpiredGatewayOrders($scopes, $authUser);
         return ['auto_cancelled' => $count];
     }
 
@@ -105,6 +115,12 @@ final class PaymentService
             throw new ValidationException('Invalid callback signature');
         }
 
+        $callbackStatus = strtoupper((string) ($payload['status'] ?? ''));
+        if ($callbackStatus !== 'SUCCESS') {
+            Log::info('payments.gateway_callback.rejected', ['order_ref' => $orderRef, 'reason' => 'non_success_status', 'status' => $callbackStatus]);
+            return ['processed' => false, 'rejected' => true, 'reason' => 'callback status is not SUCCESS'];
+        }
+
         $result = Db::transaction(function () use ($orderRef, $transactionRef, $payload): array {
             $inserted = $this->paymentRepository->saveCallback($transactionRef, $payload);
             if (!$inserted) {
@@ -116,17 +132,38 @@ final class PaymentService
                 throw new NotFoundException('Gateway order not found');
             }
 
-            if ((string) ($order['status'] ?? '') === 'paid') {
+            $orderStatus = (string) ($order['status'] ?? '');
+            if ($orderStatus === 'paid') {
                 return ['idempotent' => true, 'processed' => true, 'booking_id' => (int) ($order['booking_id'] ?? 0)];
+            }
+            if ($orderStatus === 'cancelled') {
+                throw new ValidationException('Cannot capture payment for cancelled order');
+            }
+            if ($orderStatus !== 'pending') {
+                throw new ValidationException('Order is not in a capturable state: ' . $orderStatus);
+            }
+            if (strtotime((string) ($order['expire_at'] ?? '')) <= time()) {
+                throw new ValidationException('Order has expired');
+            }
+
+            $callbackAmount = (float) ($payload['amount'] ?? 0);
+            $orderAmount = (float) ($order['amount'] ?? 0);
+            if ($callbackAmount > 0 && abs($callbackAmount - $orderAmount) > 0.01) {
+                throw new ValidationException('Callback amount does not match order amount');
             }
 
             $this->paymentRepository->markGatewayOrderPaid($orderRef, $transactionRef, $payload, true);
+
+            $bookingScope = $this->paymentRepository->bookingScopeById((int) $order['booking_id']);
 
             $this->create([
                 'booking_id' => (int) $order['booking_id'],
                 'amount' => (float) $order['amount'],
                 'method' => 'wechat_local',
                 'status' => 'captured',
+                'store_id' => $bookingScope['store_id'] ?? null,
+                'warehouse_id' => $bookingScope['warehouse_id'] ?? null,
+                'department_id' => $bookingScope['department_id'] ?? null,
             ]);
 
             return ['processed' => true, 'verified' => true, 'booking_id' => (int) $order['booking_id']];
@@ -142,10 +179,10 @@ final class PaymentService
         return $result;
     }
 
-    public function dailyReconciliation(string $date): array
+    public function dailyReconciliation(string $date, array $scopes = [], array $authUser = []): array
     {
-        $gatewayOrders = $this->paymentRepository->paidGatewayOrdersByDate($date);
-        $payments = $this->paymentRepository->paymentsByDate($date);
+        $gatewayOrders = $this->paymentRepository->paidGatewayOrdersByDate($date, $scopes, $authUser);
+        $payments = $this->paymentRepository->paymentsByDate($date, $scopes, $authUser);
         $paymentMap = [];
         foreach ($payments as $p) {
             $paymentMap[(int) $p['booking_id']] = true;
@@ -177,6 +214,9 @@ final class PaymentService
             'expected_total' => $expected,
             'actual_total' => $actual,
             'status' => $issues > 0 ? 'abnormal' : 'open',
+            'store_id' => $authUser['store_id'] ?? null,
+            'warehouse_id' => $authUser['warehouse_id'] ?? null,
+            'department_id' => $authUser['department_id'] ?? null,
         ]);
 
         Log::info('payments.daily_reconciliation.completed', ['date' => $date, 'batch_ref' => $rec['batch_ref'], 'issues' => $issues, 'variance' => $rec['variance']]);

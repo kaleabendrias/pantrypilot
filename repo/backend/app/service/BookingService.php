@@ -68,6 +68,12 @@ final class BookingService
         }
 
         $qty = (int) ($payload['quantity'] ?? 1);
+        if ($qty < 1) {
+            throw new ValidationException('Quantity must be at least 1');
+        }
+        if ($qty > 100) {
+            throw new ValidationException('Quantity cannot exceed 100');
+        }
 
         if (!empty($payload['customer_latitude']) && !empty($payload['customer_longitude'])
             && !empty($point['latitude']) && !empty($point['longitude'])) {
@@ -107,9 +113,19 @@ final class BookingService
         return ['id' => $id, 'booking_code' => $payload['booking_code'], 'slot_remaining' => $remaining['remaining']];
     }
 
-    public function pickupPoints(): array
+    public function pickupPoints(array $scopes = [], array $authUser = []): array
     {
-        return $this->bookingRepository->pickupPoints();
+        return $this->bookingRepository->pickupPoints($scopes, $authUser);
+    }
+
+    public function pickupPointById(int $id): ?array
+    {
+        return $this->bookingRepository->pickupPointById($id);
+    }
+
+    public function pickupPointInScope(int $pickupPointId, array $scopes = [], array $authUser = []): bool
+    {
+        return $this->bookingRepository->pickupPointInScope($pickupPointId, $scopes, $authUser);
     }
 
     public function recipeDetail(int $recipeId): array
@@ -124,6 +140,11 @@ final class BookingService
     public function recipeExists(int $recipeId): bool
     {
         return $this->bookingRepository->recipeExists($recipeId);
+    }
+
+    public function recipeBookable(int $recipeId): bool
+    {
+        return $this->bookingRepository->recipeBookable($recipeId);
     }
 
     public function canAccessRecipe(int $recipeId, array $scopes = [], array $authUser = []): bool
@@ -146,10 +167,10 @@ final class BookingService
         return $this->bookingRepository->checkIn($bookingId, $staffId);
     }
 
-    public function autoClassifyNoShow(): array
+    public function autoClassifyNoShow(array $scopes = [], array $authUser = []): array
     {
         $cutoff = date('Y-m-d H:i:s', time() - (15 * 60));
-        return $this->bookingRepository->classifyNoShows($cutoff);
+        return $this->bookingRepository->classifyNoShows($cutoff, $scopes, $authUser);
     }
 
     public function printableDispatchNote(int $bookingId): array

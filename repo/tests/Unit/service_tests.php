@@ -37,20 +37,42 @@ runTest('Auth token hash is deterministic for signature-safe comparisons', funct
     assertEquals($svc->hashToken($raw), $svc->hashToken($raw), 'Same raw token must always hash identically');
 });
 
-runTest('Security config supports environment overrides with offline defaults', function (): void {
+runTest('Security config requires environment variables and supports overrides', function (): void {
     $configPath = '/var/www/html/config/security.php';
+
+    // Ensure all required env vars are set for loading
+    $origKey = getenv('PANTRYPILOT_CRYPTO_KEY');
+    $origHmac = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
+    $origIv = getenv('PANTRYPILOT_CRYPTO_IV');
 
     putenv('PANTRYPILOT_CRYPTO_KEY=override_crypto_key_for_test');
     putenv('PANTRYPILOT_GATEWAY_HMAC_SECRET=override_hmac_secret_for_test');
+    putenv('PANTRYPILOT_CRYPTO_IV=override_iv_16byt');
     $cfg = require $configPath;
     assertEquals('override_crypto_key_for_test', (string) ($cfg['crypto']['key'] ?? ''), 'crypto key should be overridden by env');
     assertEquals('override_hmac_secret_for_test', (string) ($cfg['gateway']['hmac_secret'] ?? ''), 'gateway hmac secret should be overridden by env');
+    assertEquals('override_iv_16byt', (string) ($cfg['crypto']['iv'] ?? ''), 'crypto iv should be overridden by env');
 
+    // Verify that missing required env vars cause a RuntimeException
     putenv('PANTRYPILOT_CRYPTO_KEY');
     putenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
-    $cfg2 = require $configPath;
-    assertEquals('local_sensitive_data_key_32bytes_long!', (string) ($cfg2['crypto']['key'] ?? ''), 'crypto key should fall back for offline default');
-    assertEquals('local_gateway_hmac_secret_change_me', (string) ($cfg2['gateway']['hmac_secret'] ?? ''), 'hmac should fall back for offline default');
+    putenv('PANTRYPILOT_CRYPTO_IV');
+    $threw = false;
+    try {
+        require $configPath;
+    } catch (\RuntimeException $e) {
+        $threw = true;
+        assertTrue(str_contains($e->getMessage(), 'PANTRYPILOT_'), 'Exception should name the missing env var');
+    }
+    assertTrue($threw, 'Missing required env vars must throw RuntimeException');
+
+    // Restore original env for subsequent tests
+    if ($origKey !== false) putenv("PANTRYPILOT_CRYPTO_KEY={$origKey}");
+    else putenv('PANTRYPILOT_CRYPTO_KEY=' . (getenv('PANTRYPILOT_CRYPTO_KEY') ?: 'change_me_crypto_key_exactly32b!'));
+    if ($origHmac !== false) putenv("PANTRYPILOT_GATEWAY_HMAC_SECRET={$origHmac}");
+    else putenv('PANTRYPILOT_GATEWAY_HMAC_SECRET=' . (getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min'));
+    if ($origIv !== false) putenv("PANTRYPILOT_CRYPTO_IV={$origIv}");
+    else putenv('PANTRYPILOT_CRYPTO_IV=' . (getenv('PANTRYPILOT_CRYPTO_IV') ?: 'change_me_16bytes'));
 });
 
 runTest('Notification recipient scope helper enforces non-admin data isolation', function (): void {

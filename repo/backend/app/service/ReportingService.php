@@ -21,6 +21,13 @@ final class ReportingService
         return $this->reportingRepository->anomalyMetrics($scopes, $authUser);
     }
 
+    public function generateAlerts(array $scopes = [], array $authUser = []): array
+    {
+        $metrics = $this->reportingRepository->anomalyMetrics($scopes, $authUser);
+        $persisted = $this->reportingRepository->persistAlerts($metrics['alerts'] ?? []);
+        return ['alerts_generated' => $persisted, 'metrics' => $metrics];
+    }
+
     public function exportBookingsCsv(array $scopes = [], array $authUser = []): array
     {
         $csv = $this->reportingRepository->exportBookingsCsv($scopes, $authUser);

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace app\service;
 
+use app\domain\identity\PasswordPolicy;
 use app\exception\ForbiddenException;
 use app\exception\NotFoundException;
 use app\exception\ValidationException;
@@ -16,19 +17,25 @@ final class AdministrationService
     public function __construct(
         private readonly AdminRepository $adminRepository,
         private readonly IdentityRepository $identityRepository,
-        private readonly CryptoService $cryptoService
+        private readonly CryptoService $cryptoService,
+        private readonly PasswordPolicy $passwordPolicy = new PasswordPolicy()
     ) {
     }
 
-    public function users(string $usernameFilter = ''): array
+    public function users(string $usernameFilter = '', array $scopes = [], array $authUser = []): array
     {
         $fields = ['id', 'username', 'display_name', 'role', 'store_id', 'warehouse_id', 'department_id', 'account_enabled', 'created_at', 'phone_enc', 'address_enc'];
-        if ($usernameFilter === '') {
-            $rows = \think\facade\Db::name('users')->field($fields)->order('id', 'desc')->select()->toArray();
-            return $this->maskSensitiveContacts($rows);
+        $query = Db::name('users')->field($fields)->order('id', 'desc');
+
+        if ($usernameFilter !== '') {
+            $query->whereLike('username', "%{$usernameFilter}%");
         }
 
-        $rows = \think\facade\Db::name('users')->field($fields)->whereLike('username', "%{$usernameFilter}%")->order('id', 'desc')->select()->toArray();
+        if (!$this->isGlobalActor($authUser)) {
+            $this->applyScopeFilter($query, $scopes, $authUser);
+        }
+
+        $rows = $query->select()->toArray();
         return $this->maskSensitiveContacts($rows);
     }
 
@@ -43,9 +50,9 @@ final class AdministrationService
         ]);
     }
 
-    public function auditLogs(int $page = 1, int $perPage = 20): array
+    public function auditLogs(int $page = 1, int $perPage = 20, array $scopes = [], array $authUser = []): array
     {
-        return $this->adminRepository->listAuditLogs($page, $perPage);
+        return $this->adminRepository->listAuditLogs($page, $perPage, $scopes, $authUser);
     }
 
     public function issueCriticalReauthToken(int $userId, string $password): array
@@ -84,8 +91,11 @@ final class AdministrationService
         return Db::name('resources')->order('code')->select()->toArray();
     }
 
-    public function createRole(array $payload): array
+    public function createRole(array $payload, array $actorUser = []): array
     {
+        if (!$this->isGlobalActor($actorUser)) {
+            throw new ForbiddenException('Only global administrators can create roles');
+        }
         if (empty($payload['code']) || empty($payload['name'])) {
             throw new \InvalidArgumentException('code and name are required');
         }
@@ -96,11 +106,17 @@ final class AdministrationService
             'created_at' => date('Y-m-d H:i:s'),
         ]);
 
+        $this->audit('create_role', 'role', (string) $id, (int) ($actorUser['id'] ?? 0), ['code' => $payload['code']]);
+
         return ['id' => $id];
     }
 
-    public function grantRolePermissionResource(array $payload): array
+    public function grantRolePermissionResource(array $payload, array $actorUser = []): array
     {
+        if (!$this->isGlobalActor($actorUser)) {
+            throw new ForbiddenException('Only global administrators can grant permissions');
+        }
+
         Db::name('role_permission_resources')->insert([
             'role_id' => (int) $payload['role_id'],
             'permission_id' => (int) $payload['permission_id'],
@@ -108,16 +124,47 @@ final class AdministrationService
             'created_at' => date('Y-m-d H:i:s'),
         ], true);
 
+        $this->audit('grant_permission', 'role_permission_resource', (string) ($payload['role_id'] ?? 0), (int) ($actorUser['id'] ?? 0), [
+            'permission_id' => (int) $payload['permission_id'],
+            'resource_id' => (int) $payload['resource_id'],
+        ]);
+
         return ['granted' => true];
     }
 
-    public function assignRoleToUser(array $payload): array
+    private const PRIVILEGED_ROLE_CODES = ['admin'];
+
+    public function assignRoleToUser(array $payload, array $actorUser = [], array $actorScopes = []): array
     {
+        $roleId = (int) $payload['role_id'];
+        $targetRole = Db::name('roles')->where('id', $roleId)->find();
+        if (!$targetRole) {
+            throw new NotFoundException('Role not found');
+        }
+
+        $isPrivileged = in_array((string) ($targetRole['code'] ?? ''), self::PRIVILEGED_ROLE_CODES, true);
+
+        if (!$this->isGlobalActor($actorUser)) {
+            if ($isPrivileged) {
+                throw new ForbiddenException('Only global administrators can assign privileged roles');
+            }
+            $targetUser = $this->identityRepository->findById((int) $payload['user_id']);
+            if (!$targetUser) {
+                throw new NotFoundException('User not found');
+            }
+            $this->assertManageableTarget($targetUser, $actorUser, $actorScopes);
+        }
+
         Db::name('user_roles')->insert([
             'user_id' => (int) $payload['user_id'],
-            'role_id' => (int) $payload['role_id'],
+            'role_id' => $roleId,
             'created_at' => date('Y-m-d H:i:s'),
         ], true);
+
+        $this->audit('assign_role', 'user_role', (string) ($payload['user_id'] ?? 0), (int) ($actorUser['id'] ?? 0), [
+            'role_id' => $roleId,
+            'role_code' => (string) ($targetRole['code'] ?? ''),
+        ]);
 
         return ['assigned' => true];
     }
@@ -146,6 +193,7 @@ final class AdministrationService
         if ($password === '') {
             throw new ValidationException('new_password is required');
         }
+        $this->passwordPolicy->assertValid($password);
         $this->identityRepository->updatePasswordHash($targetUserId, password_hash($password, PASSWORD_BCRYPT));
         $this->audit('reset_password', 'user', (string) $targetUserId, (int) ($actorUser['id'] ?? 0));
 
@@ -170,7 +218,9 @@ final class AdministrationService
 
         if (!$this->isGlobalActor($actorUser)) {
             foreach (['store', 'warehouse', 'department'] as $scopeType) {
-                $allowed = array_map('strval', $actorScopes[$scopeType] ?? []);
+                $explicit = array_map('strval', $actorScopes[$scopeType] ?? []);
+                $fallback = (string) ($actorUser[$scopeType . '_id'] ?? '');
+                $allowed = $explicit !== [] ? $explicit : ($fallback !== '' ? [$fallback] : []);
                 foreach ($scopeMap[$scopeType] as $value) {
                     if (!in_array((string) $value, $allowed, true)) {
                         throw new ForbiddenException('Forbidden');
@@ -207,7 +257,30 @@ final class AdministrationService
 
     private function isGlobalActor(array $actorUser): bool
     {
-        return (string) ($actorUser['role'] ?? '') === 'admin';
+        return ScopeHelper::isGlobalAdmin($actorUser);
+    }
+
+    private function applyScopeFilter($query, array $scopes, array $authUser): void
+    {
+        $store = $scopes['store'] ?? [];
+        $warehouse = $scopes['warehouse'] ?? [];
+        $department = $scopes['department'] ?? [];
+
+        if ($store !== []) {
+            $query->whereIn('store_id', $store);
+        } elseif (!empty($authUser['store_id'])) {
+            $query->where('store_id', (string) $authUser['store_id']);
+        }
+        if ($warehouse !== []) {
+            $query->whereIn('warehouse_id', $warehouse);
+        } elseif (!empty($authUser['warehouse_id'])) {
+            $query->where('warehouse_id', (string) $authUser['warehouse_id']);
+        }
+        if ($department !== []) {
+            $query->whereIn('department_id', $department);
+        } elseif (!empty($authUser['department_id'])) {
+            $query->where('department_id', (string) $authUser['department_id']);
+        }
     }
 
     private function assertManageableTarget(array $targetUser, array $actorUser, array $actorScopes): void
@@ -229,10 +302,21 @@ final class AdministrationService
         }
 
         foreach (['store', 'warehouse', 'department'] as $scopeType) {
-            $allowed = array_map('strval', $actorScopes[$scopeType] ?? []);
-            $field = $scopeType . '_id';
-            $targetValue = (string) ($targetUser[$field] ?? '');
-            if ($targetValue !== '' && $allowed !== [] && !in_array($targetValue, $allowed, true)) {
+            $explicitScopes = array_map('strval', $actorScopes[$scopeType] ?? []);
+            $fallbackField = $scopeType . '_id';
+            $fallbackValue = (string) ($actorUser[$fallbackField] ?? '');
+
+            $allowed = $explicitScopes;
+            if ($allowed === [] && $fallbackValue !== '') {
+                $allowed = [$fallbackValue];
+            }
+
+            if ($allowed === []) {
+                throw new ForbiddenException('Forbidden');
+            }
+
+            $targetValue = (string) ($targetUser[$fallbackField] ?? '');
+            if ($targetValue !== '' && !in_array($targetValue, $allowed, true)) {
                 throw new ForbiddenException('Forbidden');
             }
         }

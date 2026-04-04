@@ -140,7 +140,7 @@ final class FileRepository
             ->where('a.created_at', '<', $threshold)
             ->field('a.id,a.storage_path,a.owner_type,a.owner_id');
 
-        if ((string) ($authUser['role'] ?? '') !== 'admin') {
+        if (!\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
             $this->applyAttachmentScopeConditions($query, $scopes, $authUser);
         }
 

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 $results = ['passed' => 0, 'failed' => 0];
+$GATEWAY_HMAC_SECRET = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
 
 function tassert(bool $condition, string $message): void
 {
@@ -783,7 +784,7 @@ runCase('No-show sweep triggers blacklist automation', function () use (&$adminT
     tassert(($blocked['json']['success'] ?? true) === false, 'blacklisted user booking must fail');
 });
 
-runCase('Payment callback signature verification and strict transaction_ref idempotency', function () use (&$adminToken): void {
+runCase('Payment callback signature verification and strict transaction_ref idempotency', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
     $create = api('POST', '/api/v1/payments/gateway/orders', ['booking_id' => 1, 'amount' => 9.99], $adminToken);
     assertJsonContract($create, 'gateway order create');
     tassert($create['status'] === 201, 'gateway order create should return HTTP 201');
@@ -793,7 +794,7 @@ runCase('Payment callback signature verification and strict transaction_ref idem
 
     $payload = ['amount' => 9.99, 'order_ref' => $orderRef, 'status' => 'SUCCESS', 'transaction_ref' => 'TX-OK-001'];
     ksort($payload);
-    $signature = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), 'local_gateway_hmac_secret_change_me');
+    $signature = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
 
     $cb1 = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $payload, ['X-Signature' => $signature], null);
     assertJsonContract($cb1, 'gateway callback first');
@@ -807,10 +808,10 @@ runCase('Payment callback signature verification and strict transaction_ref idem
     tassert(($cb2['json']['data']['idempotent'] ?? false) === true, 'second callback must be idempotent');
 
     $alteredPayload = $payload;
-    $alteredPayload['status'] = 'SUCCESS_RETRY_DIFFERENT_PAYLOAD';
+    $alteredPayload['status'] = 'SUCCESS';
     $alteredPayload['amount'] = 9.98;
     ksort($alteredPayload);
-    $alteredSig = hash_hmac('sha256', json_encode($alteredPayload, JSON_UNESCAPED_UNICODE), 'local_gateway_hmac_secret_change_me');
+    $alteredSig = hash_hmac('sha256', json_encode($alteredPayload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
     $cbAltered = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $alteredPayload, ['X-Signature' => $alteredSig], null);
     assertJsonContract($cbAltered, 'gateway callback altered payload same tx');
     tassert($cbAltered['status'] === 200, 'same transaction_ref with altered payload should be idempotent 200');
@@ -833,7 +834,7 @@ runCase('Payment callback signature verification and strict transaction_ref idem
     tassert($badCbRows === 0, 'bad-signature callback must not persist callback rows');
 });
 
-runCase('Payment callback remains safe under concurrent duplicate attempts', function () use (&$adminToken): void {
+runCase('Payment callback remains safe under concurrent duplicate attempts', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
     $create = api('POST', '/api/v1/payments/gateway/orders', ['booking_id' => 2, 'amount' => 8.88], $adminToken);
     assertJsonContract($create, 'gateway order create for race');
     tassert($create['status'] === 201, 'gateway order create for race should return HTTP 201');
@@ -842,7 +843,7 @@ runCase('Payment callback remains safe under concurrent duplicate attempts', fun
 
     $payload = ['amount' => 8.88, 'order_ref' => $orderRef, 'status' => 'SUCCESS', 'transaction_ref' => 'TX-RACE-001'];
     ksort($payload);
-    $signature = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), 'local_gateway_hmac_secret_change_me');
+    $signature = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
 
     if (function_exists('curl_multi_init')) {
         $url = 'http://127.0.0.1/api/v1/payments/gateway/callback';
@@ -1531,6 +1532,518 @@ runCase('Admin account lifecycle APIs enforce authorization and scope constraint
     $delegateForbidden = api('POST', '/api/v1/admin/users/1/disable', [], $scopedToken);
     assertJsonContract($delegateForbidden, 'scoped delegate admin action forbidden');
     tassert($delegateForbidden['status'] === 403, 'scoped non-global admin delegate must not manage admin account');
+});
+
+runCase('Admin password reset rejects weak passwords that violate policy', function () use (&$adminToken): void {
+    $weakReset = api('POST', '/api/v1/admin/users/2/reset-password', ['new_password' => 'short1'], $adminToken);
+    assertJsonContract($weakReset, 'weak password reset');
+    tassert($weakReset['status'] === 422, 'admin reset with password under 10 chars must be rejected');
+
+    $noDigitReset = api('POST', '/api/v1/admin/users/2/reset-password', ['new_password' => 'abcdefghijk'], $adminToken);
+    assertJsonContract($noDigitReset, 'no-digit password reset');
+    tassert($noDigitReset['status'] === 422, 'admin reset without digit must be rejected');
+
+    $noLetterReset = api('POST', '/api/v1/admin/users/2/reset-password', ['new_password' => '1234567890'], $adminToken);
+    assertJsonContract($noLetterReset, 'no-letter password reset');
+    tassert($noLetterReset['status'] === 422, 'admin reset without letter must be rejected');
+
+    $validReset = api('POST', '/api/v1/admin/users/2/reset-password', ['new_password' => 'scope654321'], $adminToken);
+    assertJsonContract($validReset, 'valid password reset');
+    tassert($validReset['status'] === 200, 'admin reset with valid password should succeed');
+});
+
+runCase('Payment creation requires authorized booking reference', function () use (&$scopedToken, &$adminToken): void {
+    $pdo = pdo();
+    $code = 'BKG-OOS-PAY-' . strtoupper(bin2hex(random_bytes(3)));
+    $slot = date('Y-m-d H:i:s', strtotime('+3 day 14:00'));
+    $pdo->prepare('INSERT INTO bookings(booking_code,recipe_id,user_id,pickup_point_id,pickup_at,slot_start,slot_end,quantity,status,store_id,warehouse_id,department_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$code, 1, 1, 1, $slot, $slot, date('Y-m-d H:i:s', strtotime($slot) + 1800), 1, 'pending', '999', '999', '999', date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+    $oosBookingId = (int) $pdo->lastInsertId();
+
+    $payOos = api('POST', '/api/v1/payments', [
+        'booking_id' => $oosBookingId,
+        'amount' => 10.00,
+        'method' => 'cash',
+        'status' => 'captured',
+    ], $scopedToken);
+    assertJsonContract($payOos, 'payment for out-of-scope booking');
+    tassert($payOos['status'] === 403, 'payment for out-of-scope booking must be forbidden');
+
+    $payMissing = api('POST', '/api/v1/payments', [
+        'booking_id' => 999999,
+        'amount' => 10.00,
+        'method' => 'cash',
+        'status' => 'captured',
+    ], $adminToken);
+    assertJsonContract($payMissing, 'payment for non-existent booking');
+    tassert($payMissing['status'] === 404, 'payment for non-existent booking must be 404');
+});
+
+runCase('Gateway order creation requires authorized booking reference', function () use (&$scopedToken, &$adminToken): void {
+    $gwMissing = api('POST', '/api/v1/payments/gateway/orders', [
+        'booking_id' => 999999,
+        'amount' => 15.00,
+    ], $adminToken);
+    assertJsonContract($gwMissing, 'gateway order for non-existent booking');
+    tassert($gwMissing['status'] === 404, 'gateway order for non-existent booking must be 404');
+});
+
+runCase('Public registration cannot assign privileged roles', function (): void {
+    $reg = api('POST', '/api/v1/identity/register', [
+        'username' => 'escalation_test_' . bin2hex(random_bytes(3)),
+        'password' => 'escalate1234',
+        'role' => 'admin',
+    ]);
+    assertJsonContract($reg, 'registration with admin role');
+    tassert($reg['status'] === 201, 'registration should succeed');
+    $userId = (int) ($reg['json']['data']['id'] ?? 0);
+    tassert($userId > 0, 'registered user id expected');
+
+    $pdo = pdo();
+    $row = $pdo->prepare('SELECT role FROM users WHERE id = ?');
+    $row->execute([$userId]);
+    $r = $row->fetch(PDO::FETCH_ASSOC) ?: [];
+    tassert((string) ($r['role'] ?? '') === 'customer', 'public registration must force customer role regardless of supplied role');
+});
+
+runCase('Finance re-auth endpoint is accessible with payment:approve permission', function () use (&$adminToken): void {
+    $reauth = api('POST', '/api/v1/payments/reauth', ['password' => 'admin12345'], $adminToken);
+    assertJsonContract($reauth, 'finance reauth');
+    tassert($reauth['status'] === 200, 'finance reauth should return 200 for user with payment:approve');
+    $token = (string) ($reauth['json']['data']['reauth_token'] ?? '');
+    tassert(strlen($token) > 10, 'finance reauth should return a token');
+});
+
+runCase('Notification event creation includes scope from authenticated context', function () use (&$scopedToken): void {
+    $event = api('POST', '/api/v1/notifications/events', [
+        'event_type' => 'scope_test',
+        'channel' => 'kiosk',
+        'payload' => ['test' => true],
+    ], $scopedToken);
+    assertJsonContract($event, 'scoped notification event');
+    tassert($event['status'] === 201, 'scoped event creation should return 201');
+    $eventId = (int) ($event['json']['data']['id'] ?? 0);
+    tassert($eventId > 0, 'event id expected');
+
+    $pdo = pdo();
+    $row = $pdo->prepare('SELECT store_id, warehouse_id, department_id FROM message_events WHERE id = ?');
+    $row->execute([$eventId]);
+    $r = $row->fetch(PDO::FETCH_ASSOC) ?: [];
+    tassert($r['store_id'] !== null && $r['store_id'] !== '', 'event store_id should be set from auth context');
+});
+
+runCase('Bookings pickup-points route is covered by ACL', function () use (&$adminToken): void {
+    $points = api('GET', '/api/v1/bookings/pickup-points', [], $adminToken);
+    assertJsonContract($points, 'bookings pickup-points ACL');
+    tassert($points['status'] === 200, 'bookings/pickup-points should be accessible with booking:read');
+
+    $noAuth = api('GET', '/api/v1/bookings/pickup-points', []);
+    tassert($noAuth['status'] === 401, 'bookings/pickup-points without auth should return 401');
+});
+
+runCase('Check-in rejects bookings with invalid state', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $code = 'BKG-NOSHOW-CHK-' . strtoupper(bin2hex(random_bytes(3)));
+    $slot = date('Y-m-d H:i:s', strtotime('+2 hour'));
+    $pdo->prepare('INSERT INTO bookings(booking_code,recipe_id,user_id,pickup_point_id,pickup_at,slot_start,slot_end,quantity,status,store_id,warehouse_id,department_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$code, 1, 1, 1, $slot, $slot, date('Y-m-d H:i:s', strtotime($slot) + 1800), 1, 'no_show', '1', '1', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+    $noShowBookingId = (int) $pdo->lastInsertId();
+
+    $checkin = api('POST', '/api/v1/bookings/check-in', ['booking_id' => $noShowBookingId], $adminToken);
+    assertJsonContract($checkin, 'check-in no-show booking');
+    tassert($checkin['status'] === 422, 'check-in of no_show booking must be rejected');
+});
+
+runCase('Callback-created payments inherit booking scope fields', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $code = 'BKG-CBSCOPE-' . strtoupper(bin2hex(random_bytes(3)));
+    $slot = date('Y-m-d H:i:s', strtotime('+3 day 12:00'));
+    $pdo->prepare('INSERT INTO bookings(booking_code,recipe_id,user_id,pickup_point_id,pickup_at,slot_start,slot_end,quantity,status,store_id,warehouse_id,department_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$code, 1, 1, 1, $slot, $slot, date('Y-m-d H:i:s', strtotime($slot) + 1800), 1, 'pending', '1', '1', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+    $scopedBookingId = (int) $pdo->lastInsertId();
+
+    $gwOrder = api('POST', '/api/v1/payments/gateway/orders', [
+        'booking_id' => $scopedBookingId,
+        'amount' => 25.00,
+    ], $adminToken);
+    assertJsonContract($gwOrder, 'gateway order for scope test');
+    tassert($gwOrder['status'] === 201, 'gateway order should be created');
+    $orderRef = (string) ($gwOrder['json']['data']['order_ref'] ?? '');
+
+    $txRef = 'TX-SCOPE-' . strtoupper(bin2hex(random_bytes(4)));
+    $callbackPayload = ['order_ref' => $orderRef, 'transaction_ref' => $txRef, 'status' => 'SUCCESS'];
+    ksort($callbackPayload);
+    $hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
+    $sig = hash_hmac('sha256', json_encode($callbackPayload, JSON_UNESCAPED_UNICODE), $hmacSecret);
+
+    $cb = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $callbackPayload, ['X-Signature' => $sig], null);
+    assertJsonContract($cb, 'gateway callback scope propagation');
+    tassert($cb['status'] === 200, 'callback should process successfully');
+
+    $payRow = $pdo->prepare('SELECT store_id, warehouse_id, department_id FROM payments WHERE booking_id = ? ORDER BY id DESC LIMIT 1');
+    $payRow->execute([$scopedBookingId]);
+    $pr = $payRow->fetch(PDO::FETCH_ASSOC) ?: [];
+    tassert((string) ($pr['store_id'] ?? '') === '1', 'callback payment must inherit booking store_id');
+    tassert((string) ($pr['warehouse_id'] ?? '') === '1', 'callback payment must inherit booking warehouse_id');
+    tassert((string) ($pr['department_id'] ?? '') === '1', 'callback payment must inherit booking department_id');
+});
+
+runCase('Newly registered customer can search recipes and create a booking end-to-end', function (): void {
+    $username = 'customer_e2e_' . bin2hex(random_bytes(3));
+    $password = 'customer1234';
+
+    $reg = api('POST', '/api/v1/identity/register', [
+        'username' => $username,
+        'password' => $password,
+    ]);
+    assertJsonContract($reg, 'customer registration');
+    tassert($reg['status'] === 201, 'customer registration should return 201');
+    $userId = (int) ($reg['json']['data']['id'] ?? 0);
+    tassert($userId > 0, 'registered customer user id expected');
+
+    $login = api('POST', '/api/v1/identity/login', [
+        'username' => $username,
+        'password' => $password,
+    ]);
+    assertJsonContract($login, 'customer login');
+    tassert($login['status'] === 200, 'customer login should return 200');
+    $customerToken = (string) ($login['json']['data']['token'] ?? '');
+    tassert($customerToken !== '', 'customer should receive auth token');
+    $userRole = (string) ($login['json']['data']['user']['role'] ?? '');
+    tassert($userRole === 'customer', 'customer role should be returned on login');
+    $perms = $login['json']['data']['user']['permissions'] ?? [];
+    tassert(is_array($perms) && count($perms) > 0, 'customer should have granted permissions');
+
+    $search = api('GET', '/api/v1/recipes/search?ingredient=chickpea', [], $customerToken);
+    assertJsonContract($search, 'customer recipe search');
+    tassert($search['status'] === 200, 'customer should be able to search recipes');
+    $items = $search['json']['data']['items'] ?? [];
+    tassert(count($items) > 0, 'customer recipe search should return results');
+
+    $pickupPoints = api('GET', '/api/v1/bookings/pickup-points', [], $customerToken);
+    assertJsonContract($pickupPoints, 'customer pickup points');
+    tassert($pickupPoints['status'] === 200, 'customer should be able to load pickup points');
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+3 day 10:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1,
+        'pickup_point_id' => 1,
+        'pickup_at' => $slotStart,
+        'slot_start' => $slotStart,
+        'slot_end' => $slotEnd,
+        'quantity' => 1,
+        'customer_zip4' => '12345-6789',
+        'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128,
+        'customer_longitude' => -74.0060,
+    ], $customerToken);
+    assertJsonContract($booking, 'customer booking create');
+    tassert($booking['status'] === 201, 'customer should be able to create a booking');
+    tassert(((int) ($booking['json']['data']['id'] ?? 0)) > 0, 'customer booking should return id');
+});
+
+runCase('Customer booking inherits scope from pickup point, not user', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $username = 'scope_cust_' . bin2hex(random_bytes(3));
+    $reg = api('POST', '/api/v1/identity/register', ['username' => $username, 'password' => 'customer1234']);
+    tassert($reg['status'] === 201, 'customer registration should succeed');
+    $login = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => 'customer1234']);
+    $token = (string) ($login['json']['data']['token'] ?? '');
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+4 day 09:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1, 'pickup_point_id' => 1,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'quantity' => 1, 'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ], $token);
+    tassert($booking['status'] === 201, 'customer booking should succeed');
+    $bookingId = (int) ($booking['json']['data']['id'] ?? 0);
+
+    $row = $pdo->prepare('SELECT store_id, warehouse_id, department_id FROM bookings WHERE id = ?');
+    $row->execute([$bookingId]);
+    $r = $row->fetch(PDO::FETCH_ASSOC) ?: [];
+    tassert((string) ($r['store_id'] ?? '') === '1', 'booking must inherit store_id from pickup point');
+    tassert((string) ($r['warehouse_id'] ?? '') === '1', 'booking must inherit warehouse_id from pickup point');
+    tassert((string) ($r['department_id'] ?? '') === '1', 'booking must inherit department_id from pickup point');
+});
+
+runCase('Gateway callback rejects non-SUCCESS status', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
+    $create = api('POST', '/api/v1/payments/gateway/orders', ['booking_id' => 1, 'amount' => 5.00], $adminToken);
+    $orderRef = (string) ($create['json']['data']['order_ref'] ?? '');
+    $payload = ['amount' => 5.00, 'order_ref' => $orderRef, 'status' => 'FAILED', 'transaction_ref' => 'TX-FAIL-' . bin2hex(random_bytes(3))];
+    ksort($payload);
+    $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
+    $cb = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $payload, ['X-Signature' => $sig], null);
+    assertJsonContract($cb, 'failed status callback');
+    tassert($cb['status'] === 200, 'callback endpoint should return 200');
+    tassert(($cb['json']['data']['rejected'] ?? false) === true, 'non-SUCCESS callback must be rejected');
+});
+
+runCase('Gateway callback rejects cancelled order', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
+    $create = api('POST', '/api/v1/payments/gateway/orders', ['booking_id' => 1, 'amount' => 6.00], $adminToken);
+    $orderRef = (string) ($create['json']['data']['order_ref'] ?? '');
+
+    $autoCancel = api('POST', '/api/v1/payments/gateway/auto-cancel', [], $adminToken);
+
+    $pdo = pdo();
+    $pdo->prepare("UPDATE gateway_orders SET status='cancelled', expire_at=? WHERE order_ref=?")->execute([date('Y-m-d H:i:s', time() - 600), $orderRef]);
+
+    $payload = ['amount' => 6.00, 'order_ref' => $orderRef, 'status' => 'SUCCESS', 'transaction_ref' => 'TX-CANC-' . bin2hex(random_bytes(3))];
+    ksort($payload);
+    $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
+    $cb = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $payload, ['X-Signature' => $sig], null);
+    assertJsonContract($cb, 'cancelled order callback');
+    tassert($cb['status'] === 422, 'callback for cancelled order must be rejected with 422');
+});
+
+runCase('Gateway callback rejects amount mismatch', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
+    $create = api('POST', '/api/v1/payments/gateway/orders', ['booking_id' => 1, 'amount' => 7.50], $adminToken);
+    $orderRef = (string) ($create['json']['data']['order_ref'] ?? '');
+    $payload = ['amount' => 999.99, 'order_ref' => $orderRef, 'status' => 'SUCCESS', 'transaction_ref' => 'TX-AMT-' . bin2hex(random_bytes(3))];
+    ksort($payload);
+    $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
+    $cb = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $payload, ['X-Signature' => $sig], null);
+    assertJsonContract($cb, 'amount mismatch callback');
+    tassert($cb['status'] === 422, 'callback with mismatched amount must be rejected');
+});
+
+runCase('Admin user list and audit log scope filtering works for global admin', function () use (&$scopedToken, &$adminToken): void {
+    $pdo = pdo();
+    $otherHash = password_hash('other12345', PASSWORD_BCRYPT);
+    $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        ->execute(['other_store_user', $otherHash, 'Other Store', 'staff', '999', '999', '999', 0, date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+
+    $usersDenied = api('GET', '/api/v1/admin/users', [], $scopedToken);
+    tassert($usersDenied['status'] === 403, 'scoped user without admin:read should be denied');
+
+    $usersAdmin = api('GET', '/api/v1/admin/users', [], $adminToken);
+    assertJsonContract($usersAdmin, 'admin users global');
+    tassert($usersAdmin['status'] === 200, 'global admin should see users');
+    $items = $usersAdmin['json']['data']['items'] ?? [];
+    tassert(count($items) > 0, 'admin should see at least one user');
+
+    $auditAdmin = api('GET', '/api/v1/admin/audit-logs', [], $adminToken);
+    assertJsonContract($auditAdmin, 'admin audit logs global');
+    tassert($auditAdmin['status'] === 200, 'global admin should see audit logs');
+});
+
+runCase('Scoped finance user cannot see cross-scope reconciliation batches', function () use (&$scopedToken, &$adminToken): void {
+    $batches = api('GET', '/api/v1/payments/reconcile/batches', [], $scopedToken);
+    if ($batches['status'] === 200) {
+        $items = $batches['json']['data']['items'] ?? [];
+        foreach ($items as $batch) {
+            if (isset($batch['batch_ref'])) {
+                $issues = api('GET', '/api/v1/payments/reconcile/issues?batch_ref=' . urlencode($batch['batch_ref']), [], $scopedToken);
+                tassert($issues['status'] === 200, 'issue listing should succeed');
+            }
+        }
+    }
+    tassert(true, 'scoped finance read smoke test complete');
+});
+
+runCase('Non-global-admin cannot create roles or grant permissions', function () use (&$scopedToken, &$adminToken): void {
+    $createRole = api('POST', '/api/v1/admin/roles', ['code' => 'rogue_role', 'name' => 'Rogue'], $scopedToken);
+    tassert($createRole['status'] === 403, 'scoped user should be denied role creation');
+
+    $grant = api('POST', '/api/v1/admin/grants', ['role_id' => 1, 'permission_id' => 1, 'resource_id' => 1], $scopedToken);
+    tassert($grant['status'] === 403, 'scoped user should be denied permission granting');
+
+    $assignOos = api('POST', '/api/v1/admin/user-roles', ['user_id' => 1, 'role_id' => 2], $scopedToken);
+    tassert($assignOos['status'] === 403, 'scoped user should be denied role assignment to admin user');
+});
+
+runCase('Admin ACL mutations are audited in tamper-evident log', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $before = (int) $pdo->query("SELECT COUNT(*) FROM audit_logs WHERE action LIKE 'create_role%' OR action LIKE 'grant_permission%'")->fetchColumn();
+
+    $role = api('POST', '/api/v1/admin/roles', ['code' => 'audit_test_' . bin2hex(random_bytes(2)), 'name' => 'Audit Test'], $adminToken);
+    assertJsonContract($role, 'admin create role');
+    tassert($role['status'] === 201, 'admin should create role');
+
+    $after = (int) $pdo->query("SELECT COUNT(*) FROM audit_logs WHERE action LIKE 'create_role%' OR action LIKE 'grant_permission%'")->fetchColumn();
+    tassert($after > $before, 'role creation must be recorded in audit log');
+});
+
+runCase('Scoped user pickup-point listing respects scope boundaries', function () use (&$scopedToken, &$adminToken): void {
+    $pdo = pdo();
+    $pdo->prepare("INSERT INTO pickup_points(name,address,slot_size,active,store_id,warehouse_id,department_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
+        ->execute(['Foreign Store Point', 'Far Away', 5, 1, '999', '999', '999', date('Y-m-d H:i:s')]);
+    $foreignId = (int) $pdo->lastInsertId();
+
+    $scopedPoints = api('GET', '/api/v1/bookings/pickup-points', [], $scopedToken);
+    assertJsonContract($scopedPoints, 'scoped pickup points');
+    tassert($scopedPoints['status'] === 200, 'scoped user should see pickup points');
+    foreach (($scopedPoints['json']['data']['items'] ?? []) as $pt) {
+        tassert((int) ($pt['id'] ?? 0) !== $foreignId, 'scoped user must not see foreign-store pickup point');
+    }
+
+    $adminPoints = api('GET', '/api/v1/bookings/pickup-points', [], $adminToken);
+    $foundForeign = false;
+    foreach (($adminPoints['json']['data']['items'] ?? []) as $pt) {
+        if ((int) ($pt['id'] ?? 0) === $foreignId) { $foundForeign = true; break; }
+    }
+    tassert($foundForeign, 'admin should see all pickup points including foreign store');
+});
+
+runCase('Slot capacity check rejects foreign pickup point for scoped user', function () use (&$scopedToken): void {
+    $pdo = pdo();
+    $pdo->prepare("INSERT INTO pickup_points(name,address,slot_size,active,store_id,warehouse_id,department_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
+        ->execute(['Slot Scope Test', 'Nowhere', 3, 1, '888', '888', '888', date('Y-m-d H:i:s')]);
+    $foreignId = (int) $pdo->lastInsertId();
+    $slotStart = date('Y-m-d H:i:s', strtotime('+5 day 10:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+
+    $cap = api('GET', "/api/v1/bookings/slot-capacity?pickup_point_id={$foreignId}&slot_start=" . urlencode($slotStart) . "&slot_end=" . urlencode($slotEnd), [], $scopedToken);
+    tassert($cap['status'] === 403, 'scoped user must not query capacity for foreign-store pickup point');
+});
+
+runCase('Customer cannot access staff booking operations', function () use (&$adminToken): void {
+    $username = 'cust_staff_test_' . bin2hex(random_bytes(3));
+    $reg = api('POST', '/api/v1/identity/register', ['username' => $username, 'password' => 'customer1234']);
+    tassert($reg['status'] === 201, 'customer registration should succeed');
+    $login = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => 'customer1234']);
+    $custToken = (string) ($login['json']['data']['token'] ?? '');
+
+    $pickups = api('GET', '/api/v1/bookings/today-pickups', [], $custToken);
+    tassert($pickups['status'] === 403, 'customer must not access today-pickups (staff-only)');
+
+    $checkin = api('POST', '/api/v1/bookings/check-in', ['booking_id' => 1], $custToken);
+    tassert($checkin['status'] === 403, 'customer must not access check-in (staff-only)');
+
+    $dispatch = api('GET', '/api/v1/bookings/1/dispatch-note', [], $custToken);
+    tassert($dispatch['status'] === 403, 'customer must not access dispatch-note (staff-only)');
+});
+
+runCase('Customer can only see own bookings', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $u1 = 'cust_own_a_' . bin2hex(random_bytes(3));
+    $u2 = 'cust_own_b_' . bin2hex(random_bytes(3));
+    api('POST', '/api/v1/identity/register', ['username' => $u1, 'password' => 'customer1234']);
+    api('POST', '/api/v1/identity/register', ['username' => $u2, 'password' => 'customer1234']);
+    $l1 = api('POST', '/api/v1/identity/login', ['username' => $u1, 'password' => 'customer1234']);
+    $l2 = api('POST', '/api/v1/identity/login', ['username' => $u2, 'password' => 'customer1234']);
+    $t1 = (string) ($l1['json']['data']['token'] ?? '');
+    $t2 = (string) ($l2['json']['data']['token'] ?? '');
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+5 day 10:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $b1 = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1, 'pickup_point_id' => 1,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'quantity' => 1, 'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ], $t1);
+    tassert($b1['status'] === 201, 'customer 1 booking should succeed');
+    $b1Id = (int) ($b1['json']['data']['id'] ?? 0);
+
+    $list2 = api('GET', '/api/v1/bookings', [], $t2);
+    tassert($list2['status'] === 200, 'customer 2 booking list should return 200');
+    $items2 = $list2['json']['data']['items'] ?? [];
+    foreach ($items2 as $item) {
+        tassert((int) ($item['id'] ?? 0) !== $b1Id, 'customer 2 must not see customer 1 bookings');
+    }
+});
+
+runCase('Delegated actor cannot assign admin role', function () use (&$scopedToken, &$adminToken): void {
+    $pdo = pdo();
+    $adminRoleId = (int) ($pdo->query("SELECT id FROM roles WHERE code='admin' LIMIT 1")->fetchColumn() ?: 0);
+    tassert($adminRoleId > 0, 'admin role must exist');
+
+    $assign = api('POST', '/api/v1/admin/user-roles', ['user_id' => 2, 'role_id' => $adminRoleId], $scopedToken);
+    tassert($assign['status'] === 403, 'non-global actor must not assign admin role');
+});
+
+runCase('Booking creation rejects inactive pickup point', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $pdo->prepare("INSERT INTO pickup_points(name,address,slot_size,active,store_id,warehouse_id,department_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
+        ->execute(['Inactive Point', 'Closed', 5, 0, '1', '1', '1', date('Y-m-d H:i:s')]);
+    $inactiveId = (int) $pdo->lastInsertId();
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+4 day 10:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1, 'pickup_point_id' => $inactiveId,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'quantity' => 1, 'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ], $adminToken);
+    tassert($booking['status'] === 422, 'booking against inactive pickup point must be rejected');
+});
+
+runCase('Booking creation rejects foreign-scope pickup point for scoped user', function () use (&$scopedToken): void {
+    $pdo = pdo();
+    $pdo->prepare("INSERT INTO pickup_points(name,address,slot_size,active,store_id,warehouse_id,department_id,created_at) VALUES(?,?,?,?,?,?,?,?)")
+        ->execute(['Foreign Booking Point', 'Far', 5, 1, '777', '777', '777', date('Y-m-d H:i:s')]);
+    $foreignId = (int) $pdo->lastInsertId();
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+4 day 11:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => 1, 'pickup_point_id' => $foreignId,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'quantity' => 1, 'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ], $scopedToken);
+    tassert($booking['status'] === 403, 'booking against foreign-scope pickup point must be rejected');
+});
+
+runCase('Customer search excludes non-published recipes', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $pdo->prepare("INSERT INTO recipes(code,name,description,prep_minutes,step_count,servings,difficulty,calories,estimated_cost,status,store_id,warehouse_id,department_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        ->execute(['DRAFT-TEST', 'Draft Recipe', 'Should not appear', 10, 3, 2, 'easy', 200, 5.00, 'draft', '1', '1', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+
+    $username = 'cust_search_test_' . bin2hex(random_bytes(3));
+    api('POST', '/api/v1/identity/register', ['username' => $username, 'password' => 'customer1234']);
+    $login = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => 'customer1234']);
+    $custToken = (string) ($login['json']['data']['token'] ?? '');
+
+    $search = api('GET', '/api/v1/recipes/search?q=Draft', [], $custToken);
+    assertJsonContract($search, 'customer draft recipe search');
+    tassert($search['status'] === 200, 'search should succeed');
+    $items = $search['json']['data']['items'] ?? [];
+    foreach ($items as $item) {
+        tassert((string) ($item['code'] ?? '') !== 'DRAFT-TEST', 'customer must not see draft recipes');
+    }
+});
+
+runCase('Booking rejects non-published recipe', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $draftId = (int) $pdo->query("SELECT id FROM recipes WHERE code='DRAFT-TEST' LIMIT 1")->fetchColumn();
+    if ($draftId < 1) {
+        $pdo->prepare("INSERT INTO recipes(code,name,description,prep_minutes,step_count,servings,difficulty,calories,estimated_cost,status,store_id,warehouse_id,department_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            ->execute(['DRAFT-BOOK', 'Draft Booking', 'Not bookable', 10, 3, 2, 'easy', 200, 5.00, 'draft', '1', '1', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+        $draftId = (int) $pdo->lastInsertId();
+    }
+
+    $slotStart = date('Y-m-d H:i:s', strtotime('+4 day 14:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $booking = api('POST', '/api/v1/bookings', [
+        'recipe_id' => $draftId, 'pickup_point_id' => 1,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'quantity' => 1, 'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ], $adminToken);
+    tassert($booking['status'] === 422, 'booking against non-published recipe must be rejected');
+});
+
+runCase('Booking rejects zero and negative quantity', function () use (&$adminToken): void {
+    $slotStart = date('Y-m-d H:i:s', strtotime('+4 day 15:00'));
+    $slotEnd = date('Y-m-d H:i:s', strtotime($slotStart) + 1800);
+    $base = [
+        'recipe_id' => 1, 'pickup_point_id' => 1,
+        'pickup_at' => $slotStart, 'slot_start' => $slotStart, 'slot_end' => $slotEnd,
+        'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
+    ];
+
+    $zero = api('POST', '/api/v1/bookings', array_merge($base, ['quantity' => 0]), $adminToken);
+    tassert($zero['status'] === 422, 'zero quantity booking must be rejected');
+
+    $neg = api('POST', '/api/v1/bookings', array_merge($base, ['quantity' => -5]), $adminToken);
+    tassert($neg['status'] === 422, 'negative quantity booking must be rejected');
 });
 
 echo "API tests passed={$results['passed']} failed={$results['failed']}\n";

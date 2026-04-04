@@ -112,6 +112,13 @@ final class RecipeRepository
 
         $this->applyDataScopes($query, $scopes, $authUser);
 
+        $statusFilter = (string) ($criteria['status'] ?? '');
+        if ($statusFilter !== '') {
+            $query->where('r.status', $statusFilter);
+        } elseif (\app\service\ScopeHelper::isGlobalAdmin($authUser) === false) {
+            $query->where('r.status', 'published');
+        }
+
         if (!empty($criteria['ingredient_terms'])) {
             $query->join('recipe_ingredients ri', 'ri.recipe_id = r.id')
                 ->whereIn('ri.ingredient_name_norm', $criteria['ingredient_terms']);
@@ -120,7 +127,7 @@ final class RecipeRepository
         if (!empty($criteria['q'])) {
             $keyword = '%' . trim((string) $criteria['q']) . '%';
             $query->where(function ($subQuery) use ($keyword) {
-                $subQuery->whereLike('r.name', $keyword)->whereOrLike('r.description', $keyword);
+                $subQuery->whereLike('r.name', $keyword)->whereOr('r.description', 'like', $keyword);
             });
         }
 

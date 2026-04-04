@@ -15,6 +15,62 @@ let selectedFileId = 0;
 let selectedPaymentRef = "";
 let pickupPointsCache = [];
 let explicitTestDefaults = null;
+let currentUserRole = "";
+let currentUserPermissions = [];
+const _submitting = {};
+
+function escapeHtml(str) {
+  const s = String(str ?? "");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function guardSubmit(key, btn) {
+  if (_submitting[key]) return false;
+  _submitting[key] = true;
+  if (btn) btn.disabled = true;
+  return true;
+}
+
+function releaseSubmit(key, btn) {
+  _submitting[key] = false;
+  if (btn) btn.disabled = false;
+}
+
+function applyRoleVisibility() {
+  const perms = currentUserPermissions || [];
+  const role = currentUserRole;
+  const tabItems = document.querySelectorAll(".layui-tab-title li");
+
+  // Tab index: 0=Dashboard, 1=Recipes, 2=Booking, 3=Operations, 4=Payments, 5=Messages, 6=Files, 7=Admin
+  const has = (resource, perm) => perms.includes(`${resource}:${perm}`);
+
+  let allowed;
+  if (perms.length > 0) {
+    allowed = [0]; // Dashboard always visible
+    if (has("recipe", "read")) allowed.push(1);
+    if (has("booking", "read") || has("booking", "write")) allowed.push(2);
+    if (has("booking_ops", "read") || has("operations", "read")) allowed.push(3);
+    if (has("payment", "read")) allowed.push(4);
+    if (has("notification", "read")) allowed.push(5);
+    if (has("file", "read")) allowed.push(6);
+    if (has("admin", "read")) allowed.push(7);
+  } else {
+    // Fallback for roles without permissions array (legacy compat)
+    const roleTabs = {
+      customer: [0, 1, 2],
+      ops_staff: [0, 1, 2, 3],
+      staff: [0, 1, 2, 3],
+      manager: [0, 1, 2, 3, 5, 6],
+      finance: [0, 4],
+      admin: [0, 1, 2, 3, 4, 5, 6, 7],
+    };
+    allowed = roleTabs[role] || [0];
+  }
+
+  tabItems.forEach((tab, idx) => {
+    tab.style.display = allowed.includes(idx) ? "" : "none";
+  });
+}
 
 function getUiDefaults() {
   if (explicitTestDefaults && typeof explicitTestDefaults === "object") return explicitTestDefaults;
@@ -63,15 +119,15 @@ function numberInput(id, required = false) {
 }
 
 function getToken() {
-  return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  return sessionStorage.getItem(AUTH_TOKEN_KEY) || "";
 }
 
 function setToken(token) {
   if (token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
     authStateEl.textContent = "Authenticated";
   } else {
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
     authStateEl.textContent = "Not authenticated";
   }
 }
@@ -194,7 +250,7 @@ async function loadPickupPoints() {
     const data = await apiRequest("/bookings/pickup-points");
     pickupPointsCache = data.items || [];
     select.innerHTML = `<option value="">Pickup point</option>` + pickupPointsCache
-      .map((p) => `<option value="${p.id}">${p.name || "Point"} (#${p.id})</option>`)
+      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || "Point")} (#${escapeHtml(p.id)})</option>`)
       .join("");
     const preferred = inputValue("pickupPointManual");
     if (preferred) select.value = preferred;
@@ -252,9 +308,14 @@ async function apiRequest(path, method = "GET", body = null) {
     if (!response.ok || !data.success) throw new Error(data.message || `Request failed (HTTP ${response.status})`);
     return data.data;
   } catch (err) {
-    if (method !== "GET" && body) {
+    const isNetworkError = err instanceof TypeError && err.message.toLowerCase().includes("fetch");
+    const isAuthPath = path.includes("/identity/") || path.includes("/admin/reauth");
+    if (method !== "GET" && body && isNetworkError && !isAuthPath) {
+      const safeBody = { ...body };
+      delete safeBody.password;
+      delete safeBody.reauth_token;
       const queue = getQueue();
-      queue.push({ path, method, body, at: Date.now() });
+      queue.push({ path, method, body: safeBody, at: Date.now() });
       setQueue(queue);
     }
     throw err;
@@ -268,8 +329,8 @@ function renderTable(tableId, rows) {
     return;
   }
   const headers = Object.keys(rows[0]);
-  table.innerHTML = `<tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr>` +
-    rows.map((row) => `<tr>${headers.map((h) => `<td>${row[h] ?? ""}</td>`).join("")}</tr>`).join("");
+  table.innerHTML = `<tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>` +
+    rows.map((row) => `<tr>${headers.map((h) => `<td>${escapeHtml(row[h] ?? "")}</td>`).join("")}</tr>`).join("");
 
   if (tableId === "bookingsTable" || tableId === "filesTable" || tableId === "paymentsTable") {
     const trs = table.querySelectorAll("tr");
@@ -310,6 +371,10 @@ async function login() {
   const password = document.getElementById("password").value;
   const data = await apiRequest("/identity/login", "POST", { username, password });
   setToken(data.token);
+  const user = data.user || {};
+  currentUserRole = user.role || "";
+  currentUserPermissions = user.permissions || [];
+  applyRoleVisibility();
   layui.layer.msg("Login success");
 }
 
@@ -325,8 +390,8 @@ async function loadDashboard() {
   cards.innerHTML = Object.entries(data).map(([k, v]) => `
     <div class="card kpi-card">
       <div class="kpi-icon"><i class="layui-icon ${icons[k] || "layui-icon-chart"}"></i></div>
-      <h3>${k.replace(/_/g, " ")}</h3>
-      <div class="value">${v}</div>
+      <h3>${escapeHtml(k.replace(/_/g, " "))}</h3>
+      <div class="value">${escapeHtml(v)}</div>
     </div>`).join("");
 }
 
@@ -344,14 +409,14 @@ function renderRecipeGrid(items) {
     return;
   }
   grid.innerHTML = items.map((item) => `
-    <article class="recipe-card" data-id="${item.id}">
-      <h3>${item.name || "Unnamed recipe"}</h3>
+    <article class="recipe-card" data-id="${escapeHtml(item.id)}">
+      <h3>${escapeHtml(item.name || "Unnamed recipe")}</h3>
       <div class="recipe-meta">
-        <span><i class="layui-icon layui-icon-time"></i> ${item.prep_minutes || 0} min</span>
-        <span class="difficulty ${recipeDifficultyClass(item.difficulty)}">${item.difficulty || "easy"}</span>
+        <span><i class="layui-icon layui-icon-time"></i> ${escapeHtml(item.prep_minutes || 0)} min</span>
+        <span class="difficulty ${recipeDifficultyClass(item.difficulty)}">${escapeHtml(item.difficulty || "easy")}</span>
       </div>
       <div class="recipe-stats">
-        <span>${item.calories || 0} kcal</span>
+        <span>${escapeHtml(item.calories || 0)} kcal</span>
         <span>$${Number(item.estimated_cost || 0).toFixed(2)}</span>
       </div>
     </article>
@@ -370,12 +435,12 @@ function renderRecipeGrid(items) {
           area: ["680px", "520px"],
           shadeClose: true,
           content: `<div class="recipe-modal">
-            <p><strong>Description:</strong> ${detail.description || "N/A"}</p>
-            <p><strong>Prep:</strong> ${detail.prep_minutes || 0} min | <strong>Difficulty:</strong> ${detail.difficulty || "easy"}</p>
-            <p><strong>Calories:</strong> ${detail.calories || 0} | <strong>Estimated cost:</strong> $${Number(detail.estimated_cost || 0).toFixed(2)}</p>
-            <p><strong>Ingredients:</strong> ${(detail.ingredients || []).join(", ") || "N/A"}</p>
-            <p><strong>Cookware:</strong> ${(detail.cookware || []).join(", ") || "N/A"}</p>
-            <p><strong>Allergens:</strong> ${(detail.allergens || []).join(", ") || "N/A"}</p>
+            <p><strong>Description:</strong> ${escapeHtml(detail.description || "N/A")}</p>
+            <p><strong>Prep:</strong> ${escapeHtml(detail.prep_minutes || 0)} min | <strong>Difficulty:</strong> ${escapeHtml(detail.difficulty || "easy")}</p>
+            <p><strong>Calories:</strong> ${escapeHtml(detail.calories || 0)} | <strong>Estimated cost:</strong> $${Number(detail.estimated_cost || 0).toFixed(2)}</p>
+            <p><strong>Ingredients:</strong> ${escapeHtml((detail.ingredients || []).join(", ") || "N/A")}</p>
+            <p><strong>Cookware:</strong> ${escapeHtml((detail.cookware || []).join(", ") || "N/A")}</p>
+            <p><strong>Allergens:</strong> ${escapeHtml((detail.allergens || []).join(", ") || "N/A")}</p>
           </div>`
         });
       } catch (e) {
@@ -394,6 +459,7 @@ async function searchRecipes() {
   const difficulty = document.getElementById("recipeSearchDifficulty").value;
   const maxCalories = document.getElementById("recipeSearchMaxCalories").value;
   const budget = document.getElementById("recipeSearchBudget").value;
+  const tags = document.getElementById("recipeSearchTags").value.trim();
   const rankMode = document.getElementById("recipeSearchRankMode").value;
   const qs = new URLSearchParams();
   if (ingredient) qs.set("ingredient", ingredient);
@@ -404,6 +470,7 @@ async function searchRecipes() {
   if (difficulty) qs.set("difficulty", difficulty);
   if (maxCalories) qs.set("max_calories", maxCalories);
   if (budget) qs.set("max_budget", budget);
+  if (tags) qs.set("tags", tags);
   if (rankMode) qs.set("rank_mode", rankMode);
   const data = await apiRequest(`/recipes/search?${qs.toString()}`);
   const items = data.items || [];
@@ -500,6 +567,8 @@ function bindEvents() {
   });
 
   document.getElementById("btnCreateRecipe").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCreateRecipe");
+    if (!guardSubmit("createRecipe", btn)) return;
     try {
       const name = inputValue("recipeName");
       if (!name) throw new Error("recipeName is required");
@@ -534,8 +603,8 @@ function bindEvents() {
         allergens: allergenTerms,
         status
       });
-      layui.layer.msg("Recipe queued/created");
-    } catch (e) { layui.layer.msg(e.message); }
+      layui.layer.msg("Recipe created");
+    } catch (e) { layui.layer.msg(e.message); } finally { releaseSubmit("createRecipe", btn); }
   });
 
   document.getElementById("btnLoadBookings").addEventListener("click", async () => {
@@ -559,6 +628,8 @@ function bindEvents() {
   });
 
   document.getElementById("btnCreateBooking").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCreateBooking");
+    if (!guardSubmit("createBooking", btn)) return;
     try {
       if (!selectedSlot) {
         throw new Error("Please choose a slot first");
@@ -590,8 +661,8 @@ function bindEvents() {
         note: inputValue("bookingNote")
       });
       setFeedback("bookingFeedback", data);
-      layui.layer.msg("Booking queued/created");
-    } catch (e) { setFeedback("bookingFeedback", e.message); }
+      layui.layer.msg("Booking created");
+    } catch (e) { setFeedback("bookingFeedback", e.message); } finally { releaseSubmit("createBooking", btn); }
   });
 
   document.getElementById("btnTodayPickups").addEventListener("click", async () => {
@@ -599,18 +670,22 @@ function bindEvents() {
     renderTable("opsTable", data.items || []);
   });
   document.getElementById("btnCheckIn").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCheckIn");
+    if (!guardSubmit("checkIn", btn)) return;
     try {
       const bookingId = Number(document.getElementById("bookingSelectedId").value || selectedBookingId || 0);
       if (!bookingId) throw new Error("Select a booking row first or enter a booking id");
       const data = await apiRequest("/bookings/check-in", "POST", { booking_id: bookingId });
       setFeedback("opsFeedback", data);
-    } catch (e) { setFeedback("opsFeedback", e.message); }
+    } catch (e) { setFeedback("opsFeedback", e.message); } finally { releaseSubmit("checkIn", btn); }
   });
   document.getElementById("btnSweepNoShow").addEventListener("click", async () => {
+    const btn = document.getElementById("btnSweepNoShow");
+    if (!guardSubmit("sweepNoShow", btn)) return;
     try {
       const data = await apiRequest("/bookings/no-show-sweep", "POST", {});
       setFeedback("opsFeedback", data);
-    } catch (e) { setFeedback("opsFeedback", e.message); }
+    } catch (e) { setFeedback("opsFeedback", e.message); } finally { releaseSubmit("sweepNoShow", btn); }
   });
   document.getElementById("btnDispatchNote").addEventListener("click", async () => {
     try {
@@ -627,6 +702,8 @@ function bindEvents() {
     } catch (e) { setFeedback("opsFeedback", e.message); }
   });
   document.getElementById("btnSaveModule").addEventListener("click", async () => {
+    const btn = document.getElementById("btnSaveModule");
+    if (!guardSubmit("saveModule", btn)) return;
     try {
       const moduleKey = inputValue("moduleKey");
       if (!moduleKey) throw new Error("moduleKey is required");
@@ -642,9 +719,11 @@ function bindEvents() {
         banners: [{ title: moduleTitle, image: moduleBannerImage, link: moduleBannerLink }]
       });
       setFeedback("opsFeedback", data);
-    } catch (e) { setFeedback("opsFeedback", e.message); }
+    } catch (e) { setFeedback("opsFeedback", e.message); } finally { releaseSubmit("saveModule", btn); }
   });
   document.getElementById("btnSaveTemplate").addEventListener("click", async () => {
+    const btn = document.getElementById("btnSaveTemplate");
+    if (!guardSubmit("saveTemplate", btn)) return;
     try {
       const templateCode = inputValue("templateCode");
       if (!templateCode) throw new Error("templateCode is required");
@@ -662,6 +741,63 @@ function bindEvents() {
         active: 1
       });
       setFeedback("opsFeedback", data);
+    } catch (e) { setFeedback("opsFeedback", e.message); } finally { releaseSubmit("saveTemplate", btn); }
+  });
+  document.getElementById("btnLoadCampaigns").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/operations/campaigns");
+      renderTable("opsTable", data.items || []);
+    } catch (e) { setFeedback("opsFeedback", e.message); }
+  });
+  document.getElementById("btnCreateCampaign").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCreateCampaign");
+    if (!guardSubmit("createCampaign", btn)) return;
+    try {
+      const name = inputValue("campaignName");
+      if (!name) throw new Error("campaignName is required");
+      const slot = inputValue("campaignSlot") || "default";
+      const startAt = inputValue("campaignStartAt");
+      const endAt = inputValue("campaignEndAt");
+      if (!startAt || !endAt) throw new Error("campaign start and end times are required");
+      const budget = Number(inputValue("campaignBudget") || "0");
+      const data = await apiRequest("/operations/campaigns", "POST", {
+        name, slot, start_at: startAt.replace("T", " "), end_at: endAt.replace("T", " "), budget, status: "planned"
+      });
+      setFeedback("opsFeedback", data);
+    } catch (e) { setFeedback("opsFeedback", e.message); } finally { releaseSubmit("createCampaign", btn); }
+  });
+  document.getElementById("btnLoadTemplates").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/operations/message-templates");
+      renderTable("opsTable", data.items || []);
+    } catch (e) { setFeedback("opsFeedback", e.message); }
+  });
+  document.getElementById("btnManagerDashboard").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/operations/dashboard");
+      setFeedback("opsFeedback", data);
+    } catch (e) { setFeedback("opsFeedback", e.message); }
+  });
+  document.getElementById("btnManagerAnomalies").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/reporting/anomalies");
+      setFeedback("opsFeedback", data);
+    } catch (e) { setFeedback("opsFeedback", e.message); }
+  });
+  document.getElementById("btnManagerExportCsv").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/reporting/exports/bookings-csv");
+      const raw = atob(data.content_base64);
+      const blob = new Blob([raw], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename || "export.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setFeedback("opsFeedback", `CSV downloaded: ${data.filename}`);
     } catch (e) { setFeedback("opsFeedback", e.message); }
   });
 
@@ -669,8 +805,23 @@ function bindEvents() {
     const data = await apiRequest("/payments");
     renderTable("paymentsTable", data.items || []);
   });
+  document.getElementById("btnListBatches").addEventListener("click", async () => {
+    try {
+      const data = await apiRequest("/payments/reconcile/batches");
+      renderTable("paymentsTable", data.items || []);
+    } catch (e) { setFeedback("financeFeedback", e.message); }
+  });
+  document.getElementById("btnListIssues").addEventListener("click", async () => {
+    try {
+      const batchRef = latestBatchRef ? `?batch_ref=${encodeURIComponent(latestBatchRef)}` : "";
+      const data = await apiRequest(`/payments/reconcile/issues${batchRef}`);
+      renderTable("paymentsTable", data.items || []);
+    } catch (e) { setFeedback("financeFeedback", e.message); }
+  });
 
   document.getElementById("btnCreatePayment").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCreatePayment");
+    if (!guardSubmit("createPayment", btn)) return;
     try {
       const bookingId = Number(document.getElementById("bookingSelectedId").value || selectedBookingId || 0);
       if (!bookingId) throw new Error("Select a booking row first or enter a booking id");
@@ -685,37 +836,49 @@ function bindEvents() {
         status: "captured",
         payer_name: payerName
       });
-      layui.layer.msg("Payment queued/created");
-    } catch (e) { layui.layer.msg(e.message); }
+      layui.layer.msg("Payment created");
+    } catch (e) { layui.layer.msg(e.message); } finally { releaseSubmit("createPayment", btn); }
   });
 
   document.getElementById("btnCreateGwOrder").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCreateGwOrder");
+    if (!guardSubmit("createGwOrder", btn)) return;
     try {
       const bookingId = Number(document.getElementById("bookingSelectedId").value || selectedBookingId || 0);
       if (!bookingId) throw new Error("Select a booking row first or enter a booking id");
       const amount = numberInput("gatewayOrderAmount", true);
       const data = await apiRequest("/payments/gateway/orders", "POST", { booking_id: bookingId, amount });
       setFeedback("financeFeedback", data);
-    } catch (e) { setFeedback("financeFeedback", e.message); }
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("createGwOrder", btn); }
   });
   document.getElementById("btnAutoCancelGw").addEventListener("click", async () => {
-    const data = await apiRequest("/payments/gateway/auto-cancel", "POST", {});
-    setFeedback("financeFeedback", data);
+    const btn = document.getElementById("btnAutoCancelGw");
+    if (!guardSubmit("autoCancelGw", btn)) return;
+    try {
+      const data = await apiRequest("/payments/gateway/auto-cancel", "POST", {});
+      setFeedback("financeFeedback", data);
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("autoCancelGw", btn); }
   });
   document.getElementById("btnDailyRecon").addEventListener("click", async () => {
-    const data = await apiRequest("/payments/reconcile/daily", "POST", { date: new Date().toISOString().slice(0, 10) });
-    latestBatchRef = data.batch_ref || "";
-    setFeedback("financeFeedback", data);
+    const btn = document.getElementById("btnDailyRecon");
+    if (!guardSubmit("dailyRecon", btn)) return;
+    try {
+      const data = await apiRequest("/payments/reconcile/daily", "POST", { date: new Date().toISOString().slice(0, 10) });
+      latestBatchRef = data.batch_ref || "";
+      setFeedback("financeFeedback", data);
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("dailyRecon", btn); }
   });
   document.getElementById("btnIssueReauth").addEventListener("click", async () => {
     try {
       const pwd = document.getElementById("password").value;
-      const data = await apiRequest("/admin/reauth", "POST", { password: pwd });
+      const data = await apiRequest("/payments/reauth", "POST", { password: pwd });
       latestReauthToken = data.reauth_token;
       setFeedback("financeFeedback", { reauth_token_received: true, expire_at: data.expire_at });
     } catch (e) { setFeedback("financeFeedback", e.message); }
   });
   document.getElementById("btnRepairIssue").addEventListener("click", async () => {
+    const btn = document.getElementById("btnRepairIssue");
+    if (!guardSubmit("repairIssue", btn)) return;
     try {
       const issueId = Number(inputValue("reconIssueId") || 0);
       if (!issueId) throw new Error("reconIssueId is required");
@@ -727,18 +890,22 @@ function bindEvents() {
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
-    } catch (e) { setFeedback("financeFeedback", e.message); }
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("repairIssue", btn); }
   });
   document.getElementById("btnCloseBatch").addEventListener("click", async () => {
+    const btn = document.getElementById("btnCloseBatch");
+    if (!guardSubmit("closeBatch", btn)) return;
     try {
       const data = await apiRequest("/payments/reconcile/close", "POST", {
         batch_ref: latestBatchRef,
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
-    } catch (e) { setFeedback("financeFeedback", e.message); }
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("closeBatch", btn); }
   });
   document.getElementById("btnRefund").addEventListener("click", async () => {
+    const btn = document.getElementById("btnRefund");
+    if (!guardSubmit("refund", btn)) return;
     try {
       const paymentRef = inputValue("paymentRefInput") || selectedPaymentRef;
       if (!paymentRef) throw new Error("paymentRefInput is required");
@@ -747,9 +914,11 @@ function bindEvents() {
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
-    } catch (e) { setFeedback("financeFeedback", e.message); }
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("refund", btn); }
   });
   document.getElementById("btnAdjust").addEventListener("click", async () => {
+    const btn = document.getElementById("btnAdjust");
+    if (!guardSubmit("adjust", btn)) return;
     try {
       const paymentRef = inputValue("paymentRefInput") || selectedPaymentRef;
       if (!paymentRef) throw new Error("paymentRefInput is required");
@@ -763,7 +932,7 @@ function bindEvents() {
         reauth_token: latestReauthToken
       });
       setFeedback("financeFeedback", data);
-    } catch (e) { setFeedback("financeFeedback", e.message); }
+    } catch (e) { setFeedback("financeFeedback", e.message); } finally { releaseSubmit("adjust", btn); }
   });
 
   document.getElementById("btnLoadEvents").addEventListener("click", async () => {
@@ -771,6 +940,8 @@ function bindEvents() {
     renderTable("eventsTable", data.items || []);
   });
   document.getElementById("btnQueueEvent").addEventListener("click", async () => {
+    const btn = document.getElementById("btnQueueEvent");
+    if (!guardSubmit("queueEvent", btn)) return;
     try {
       const eventType = inputValue("eventType");
       const eventChannel = inputValue("eventChannel");
@@ -783,9 +954,11 @@ function bindEvents() {
       layui.layer.msg("Event queued");
     } catch (e) {
       setFeedback("msgFeedback", e.message);
-    }
+    } finally { releaseSubmit("queueEvent", btn); }
   });
   document.getElementById("btnSendMarketing").addEventListener("click", async () => {
+    const btn = document.getElementById("btnSendMarketing");
+    if (!guardSubmit("sendMarketing", btn)) return;
     try {
       const userId = Number(inputValue("messageUserId") || 0);
       if (!userId) throw new Error("messageUserId is required");
@@ -799,7 +972,7 @@ function bindEvents() {
         is_marketing: inputValue("messageMarketing") !== "0"
       });
       setFeedback("msgFeedback", data);
-    } catch (e) { setFeedback("msgFeedback", e.message); }
+    } catch (e) { setFeedback("msgFeedback", e.message); } finally { releaseSubmit("sendMarketing", btn); }
   });
   document.getElementById("btnLoadInbox").addEventListener("click", async () => {
     const data = await apiRequest("/notifications/inbox");
@@ -811,6 +984,8 @@ function bindEvents() {
   });
 
   document.getElementById("btnUploadMockFile").addEventListener("click", async () => {
+    const btn = document.getElementById("btnUploadMockFile");
+    if (!guardSubmit("uploadFile", btn)) return;
     try {
       const mimeType = inputValue("fileMimeType");
       if (!mimeType) throw new Error("fileMimeType is required");
@@ -843,7 +1018,7 @@ function bindEvents() {
       setFeedback("fileFeedback", data);
     } catch (e) {
       setFeedback("fileFeedback", e.message);
-    }
+    } finally { releaseSubmit("uploadFile", btn); }
   });
   document.getElementById("btnLoadFiles").addEventListener("click", async () => {
     const data = await apiRequest("/files");
@@ -879,8 +1054,20 @@ function bindEvents() {
     setFeedback("adminFeedback", data);
   });
   document.getElementById("btnExportCsv").addEventListener("click", async () => {
-    const data = await apiRequest("/reporting/exports/bookings-csv");
-    setFeedback("adminFeedback", `CSV ready: ${data.filename} (${data.content_base64.length} b64 chars)`);
+    try {
+      const data = await apiRequest("/reporting/exports/bookings-csv");
+      const raw = atob(data.content_base64);
+      const blob = new Blob([raw], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename || "export.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setFeedback("adminFeedback", `CSV downloaded: ${data.filename}`);
+    } catch (e) { setFeedback("adminFeedback", e.message); }
   });
   document.getElementById("btnCreateRole").addEventListener("click", async () => {
     const code = `role_${Date.now()}`;
@@ -895,6 +1082,68 @@ function bindEvents() {
     const perms = await apiRequest("/admin/permissions");
     const resources = await apiRequest("/admin/resources");
     setFeedback("adminFeedback", { permissions: perms.items || [], resources: resources.items || [] });
+  });
+  document.getElementById("btnEnableUser").addEventListener("click", async () => {
+    const btn = document.getElementById("btnEnableUser");
+    if (!guardSubmit("enableUser", btn)) return;
+    try {
+      const userId = numberInput("adminTargetUserId", true);
+      const data = await apiRequest(`/admin/users/${userId}/enable`, "POST", {});
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("enableUser", btn); }
+  });
+  document.getElementById("btnDisableUser").addEventListener("click", async () => {
+    const btn = document.getElementById("btnDisableUser");
+    if (!guardSubmit("disableUser", btn)) return;
+    try {
+      const userId = numberInput("adminTargetUserId", true);
+      const data = await apiRequest(`/admin/users/${userId}/disable`, "POST", {});
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("disableUser", btn); }
+  });
+  document.getElementById("btnResetPassword").addEventListener("click", async () => {
+    const btn = document.getElementById("btnResetPassword");
+    if (!guardSubmit("resetPassword", btn)) return;
+    try {
+      const userId = numberInput("adminTargetUserId", true);
+      const newPassword = inputValue("adminNewPassword");
+      if (!newPassword) throw new Error("adminNewPassword is required");
+      const data = await apiRequest(`/admin/users/${userId}/reset-password`, "POST", { new_password: newPassword });
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("resetPassword", btn); }
+  });
+  document.getElementById("btnGrantPermission").addEventListener("click", async () => {
+    const btn = document.getElementById("btnGrantPermission");
+    if (!guardSubmit("grantPermission", btn)) return;
+    try {
+      const roleId = numberInput("adminRoleId", true);
+      const permId = numberInput("adminPermId", true);
+      const resId = numberInput("adminResourceId", true);
+      const data = await apiRequest("/admin/grants", "POST", { role_id: roleId, permission_id: permId, resource_id: resId });
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("grantPermission", btn); }
+  });
+  document.getElementById("btnAssignRole").addEventListener("click", async () => {
+    const btn = document.getElementById("btnAssignRole");
+    if (!guardSubmit("assignRole", btn)) return;
+    try {
+      const userId = numberInput("adminTargetUserId", true);
+      const roleId = numberInput("adminRoleId", true);
+      const data = await apiRequest("/admin/user-roles", "POST", { user_id: userId, role_id: roleId });
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("assignRole", btn); }
+  });
+  document.getElementById("btnUpdateScopes").addEventListener("click", async () => {
+    const btn = document.getElementById("btnUpdateScopes");
+    if (!guardSubmit("updateScopes", btn)) return;
+    try {
+      const userId = numberInput("adminTargetUserId", true);
+      const store = inputValue("adminScopeStore").split(",").map(s => s.trim()).filter(Boolean);
+      const warehouse = inputValue("adminScopeWarehouse").split(",").map(s => s.trim()).filter(Boolean);
+      const department = inputValue("adminScopeDept").split(",").map(s => s.trim()).filter(Boolean);
+      const data = await apiRequest(`/admin/users/${userId}/scopes`, "POST", { store, warehouse, department });
+      setFeedback("adminFeedback", data);
+    } catch (e) { setFeedback("adminFeedback", e.message); } finally { releaseSubmit("updateScopes", btn); }
   });
 
   [

@@ -52,7 +52,29 @@ What it does:
 - runs integration/API behavior coverage from `tests/Integration/`
 - exits with nonzero status on any failure
 
-No local PHP/node tooling is required; tests run inside containers.
+No local PHP/node tooling is required; backend tests run inside containers.
+
+## Frontend-Only Preview
+
+To preview the frontend without the full Docker stack:
+
+```bash
+# Serve the frontend directory with any static HTTP server
+npx serve frontend -l 3000
+# Or open frontend/index.html directly in a browser
+```
+
+The frontend operates as a standalone Layui SPA. Without the backend, API calls will fail gracefully. The offline queue captures transport failures for later replay.
+
+## Frontend Tests
+
+Frontend unit tests can be run standalone with Node.js (no containers required):
+
+```bash
+node frontend/tests/app.test.js
+```
+
+These tests cover XSS escaping, duplicate-submit prevention, auth token session storage, role-based tab visibility, and search query wiring.
 
 ## Operator UI Inputs (No Hardcoded Record Values)
 
@@ -157,15 +179,19 @@ Use this checklist after `docker compose up` and `./run_tests.sh`.
 - Combined tag+budget+prep filter:
   - `curl -s "http://127.0.0.1:8080/api/v1/recipes/search?tags=vegan&prep_under=30&max_budget=13&rank_mode=budget" -H "Authorization: Bearer <token>"`
 
-## Production Security Overrides (No .env Required)
+## Required Environment Variables
 
-For production-grade secret management, pass environment variables via your orchestrator/compose runtime:
+The application **requires** the following environment variables to start. No hardcoded secrets are shipped in the repository.
 
-- `PANTRYPILOT_CRYPTO_KEY` (overrides `security.crypto.key`)
-- `PANTRYPILOT_CRYPTO_IV` (legacy decrypt compatibility fallback)
-- `PANTRYPILOT_GATEWAY_HMAC_SECRET` (overrides callback signature secret)
+| Variable | Description | Example |
+|---|---|---|
+| `PANTRYPILOT_GATEWAY_HMAC_SECRET` | HMAC-SHA256 secret for payment gateway callback signature verification | A random 64+ character string |
+| `PANTRYPILOT_CRYPTO_KEY` | AES-256-CBC encryption key for sensitive data at rest (must be exactly 32 bytes) | A random 32-byte string |
+| `PANTRYPILOT_CRYPTO_IV` | Legacy decryption IV (16+ chars). New encryption uses random IVs prepended to ciphertext. | A random 16+ character string |
 
-Offline-safe defaults remain in repo for local deterministic runs, but production should always override these values.
+For local development, `docker-compose.yml` provides placeholder values. **You must replace them before any non-local deployment.** The backend will refuse to start if these variables are unset.
+
+The seeded admin account in the bootstrap SQL uses a temporary password that **must be rotated on first login**.
 
 ## Security Regression Commands (Auditor)
 

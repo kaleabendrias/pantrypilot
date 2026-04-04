@@ -4,23 +4,26 @@ declare(strict_types=1);
 require __DIR__ . '/bootstrap.php';
 
 if (!class_exists('think\\facade\\Config', false)) {
-    eval(<<<'PHP'
-namespace think\facade;
+    $__hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'test_hmac_secret_for_unit_tests';
+    $__cryptoKey = getenv('PANTRYPILOT_CRYPTO_KEY') ?: 'test_crypto_key_exactly_32bytes!';
+    $__cryptoIv = getenv('PANTRYPILOT_CRYPTO_IV') ?: '1234567890abcdef';
+    eval(<<<PHP
+namespace think\\facade;
 final class Config {
-    private static array $map = [
+    private static array \$map = [
         'security.gateway.merchant_id' => 'LOCAL-MERCHANT-001',
-        'security.gateway.hmac_secret' => 'local_gateway_hmac_secret_change_me',
+        'security.gateway.hmac_secret' => '{$__hmacSecret}',
         'security.gateway.order_auto_cancel_minutes' => 10,
         'security.files.max_size_bytes' => 10485760,
         'security.files.allowed_mime_types' => ['application/pdf', 'text/csv', 'image/png', 'image/jpeg'],
         'security.files.download_url_ttl_seconds' => 300,
         'security.files.retention_days' => 180,
         'security.crypto.cipher' => 'AES-256-CBC',
-        'security.crypto.key' => 'local_sensitive_data_key_32bytes_long!',
-        'security.crypto.iv' => '1234567890abcdef',
+        'security.crypto.key' => '{$__cryptoKey}',
+        'security.crypto.iv' => '{$__cryptoIv}',
     ];
-    public static function get(string $key, $default = null) {
-        return self::$map[$key] ?? $default;
+    public static function get(string \$key, \$default = null) {
+        return self::\$map[\$key] ?? \$default;
     }
 }
 PHP);
@@ -72,6 +75,7 @@ final class IdentityRepository {
         ];
         return $id;
     }
+    public function assignRoleByCode(int $userId, string $roleCode): void {}
     public function incrementFailedLogin(int $id, int $attempts, ?string $lockedUntil): void {
         foreach ($this->users as $k => $u) {
             if ((int) $u['id'] === $id) {
@@ -113,6 +117,18 @@ final class AuthSessionRepository {
         return null;
     }
     public function touch(int $id): void {}
+}
+PHP);
+}
+
+if (!class_exists('app\\repository\\AuthorizationRepository', false)) {
+    eval(<<<'PHP'
+namespace app\repository;
+final class AuthorizationRepository {
+    public function hasPermission(int $userId, string $resourceCode, string $permissionCode): bool { return true; }
+    public function scopesByUser(int $userId): array { return ['store' => [], 'warehouse' => [], 'department' => []]; }
+    public function assignedRoleCode(int $userId): ?string { return 'customer'; }
+    public function grantKeys(int $userId): array { return ['recipe:read', 'booking:read', 'booking:write']; }
 }
 PHP);
 }
@@ -189,7 +205,7 @@ final class PaymentRepository {
         return count($this->payments);
     }
     public function reconcile(array $data): int { return 1; }
-    public function createGatewayOrder(array $data): int { $this->orders[$data['order_ref']] = ['booking_id' => $data['booking_id'], 'amount' => $data['amount']]; return 1; }
+    public function createGatewayOrder(array $data): int { $this->orders[$data['order_ref']] = ['booking_id' => $data['booking_id'], 'amount' => $data['amount'], 'status' => 'pending', 'expire_at' => date('Y-m-d H:i:s', time() + 600)]; return 1; }
     public function gatewayOrderByRef(string $orderRef): ?array { return $this->orders[$orderRef] ?? null; }
     public function callbackExists(string $transactionRef): bool { return isset($this->callbacks[$transactionRef]); }
     public function saveCallback(string $transactionRef, array $payload): bool {
@@ -200,9 +216,10 @@ final class PaymentRepository {
         return true;
     }
     public function markGatewayOrderPaid(string $orderRef, string $transactionRef, array $payload, bool $verified): void {}
-    public function autoCancelExpiredGatewayOrders(): int { return 0; }
-    public function paidGatewayOrdersByDate(string $date): array { return []; }
-    public function paymentsByDate(string $date): array { return []; }
+    public function bookingScopeById(int $bookingId): ?array { return ['store_id' => '1', 'warehouse_id' => '1', 'department_id' => '1']; }
+    public function autoCancelExpiredGatewayOrders(array $scopes = [], array $authUser = []): int { return 0; }
+    public function paidGatewayOrdersByDate(string $date, array $scopes = [], array $authUser = []): array { return []; }
+    public function paymentsByDate(string $date, array $scopes = [], array $authUser = []): array { return []; }
     public function addReconciliationIssue(array $data): int { return 1; }
     public function issuesByBatch(string $batchRef): array { return []; }
     public function issueExists(int $issueId): bool { return isset($this->issues[$issueId]); }
@@ -362,7 +379,8 @@ runTest('Payment service verifies callback signature and idempotency', function 
     $order = $svc->createGatewayOrder(['booking_id' => 7, 'amount' => 9.99]);
     $payload = ['amount' => 9.99, 'order_ref' => $order['order_ref'], 'status' => 'SUCCESS', 'transaction_ref' => 'TX-100'];
     ksort($payload);
-    $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), 'local_gateway_hmac_secret_change_me');
+    $hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
+    $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $hmacSecret);
 
     $ok = $svc->processGatewayCallback($payload, $sig);
     assertTrue(($ok['processed'] ?? false) === true, 'first callback should process');
@@ -372,9 +390,9 @@ runTest('Payment service verifies callback signature and idempotency', function 
 
     $altered = $payload;
     $altered['amount'] = 9.88;
-    $altered['status'] = 'SUCCESS_RETRY';
+    $altered['status'] = 'SUCCESS';
     ksort($altered);
-    $alteredSig = hash_hmac('sha256', json_encode($altered, JSON_UNESCAPED_UNICODE), 'local_gateway_hmac_secret_change_me');
+    $alteredSig = hash_hmac('sha256', json_encode($altered, JSON_UNESCAPED_UNICODE), $hmacSecret);
     $idemAltered = $svc->processGatewayCallback($altered, $alteredSig);
     assertTrue(($idemAltered['idempotent'] ?? false) === true, 'same transaction_ref with altered payload should remain idempotent');
     assertTrue(count($repo->callbacks) === 1, 'only one callback row should exist per transaction_ref');

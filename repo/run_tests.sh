@@ -53,4 +53,7 @@ step "Run unit tests (service logic)" \
 step "Run API integration tests" \
   docker compose exec -T api env PANTRYPILOT_TEST_NOW="2026-01-15 10:30:00" php /workspace/tests/Integration/run_api_tests.php
 
+step "Run frontend unit tests" \
+  docker compose exec -T api node /workspace/frontend/tests/app.test.js
+
 echo "\nAll tests passed"

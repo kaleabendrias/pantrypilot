@@ -16,12 +16,19 @@ final class NotificationController extends BaseController
 
     public function index()
     {
-        return JsonResponse::success(['items' => $this->notificationService->events()]);
+        $authUser = $this->request->middleware('auth_user', []);
+        $scopes = $this->request->middleware('data_scopes', []);
+        return JsonResponse::success(['items' => $this->notificationService->events($scopes, $authUser)]);
     }
 
     public function create()
     {
-        return JsonResponse::success($this->notificationService->enqueue($this->request->post()), 'Event queued', 201);
+        $payload = $this->request->post();
+        $authUser = $this->request->middleware('auth_user', []);
+        $payload['store_id'] = $authUser['store_id'] ?? null;
+        $payload['warehouse_id'] = $authUser['warehouse_id'] ?? null;
+        $payload['department_id'] = $authUser['department_id'] ?? null;
+        return JsonResponse::success($this->notificationService->enqueue($payload), 'Event queued', 201);
     }
 
     public function setOptOut()

@@ -30,6 +30,15 @@ final class ReportingController extends BaseController
         ));
     }
 
+    public function generateAlerts()
+    {
+        $result = $this->reportingService->generateAlerts(
+            $this->request->middleware('data_scopes', []),
+            $this->request->middleware('auth_user', [])
+        );
+        return JsonResponse::success($result, 'Alerts generated');
+    }
+
     public function exportBookingsCsv()
     {
         return JsonResponse::success($this->reportingService->exportBookingsCsv(

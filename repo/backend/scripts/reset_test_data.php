@@ -202,6 +202,9 @@ $ensureColumn($pdo, 'pickup_points', 'region_code', 'VARCHAR(20) NULL');
 $ensureColumn($pdo, 'pickup_points', 'latitude', 'DECIMAL(10,7) NULL');
 $ensureColumn($pdo, 'pickup_points', 'longitude', 'DECIMAL(10,7) NULL');
 $ensureColumn($pdo, 'pickup_points', 'service_radius_km', 'DECIMAL(6,2) NOT NULL DEFAULT 10.00');
+$ensureColumn($pdo, 'pickup_points', 'store_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'pickup_points', 'warehouse_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'pickup_points', 'department_id', 'VARCHAR(60) NULL');
 
 $ensureColumn($pdo, 'bookings', 'slot_start', 'DATETIME NULL');
 $ensureColumn($pdo, 'bookings', 'slot_end', 'DATETIME NULL');
@@ -280,7 +283,7 @@ $stmt->execute(['admin', $adminHash, 'System Admin', 'admin', 1, 1, 1, 0, $now, 
 $stmt->execute(['scoped_user', $scopedHash, 'Scoped User', 'staff', 1, 1, 1, 0, $now, $now]);
 $stmt->execute(['lock_user', $lockHash, 'Lock User', 'staff', 1, 1, 1, 0, $now, $now]);
 
-$roles = [['admin','Administrator'],['ops_staff','Operations Staff']];
+$roles = [['admin','Administrator'],['ops_staff','Operations Staff'],['manager','Operations Manager'],['finance','Finance Admin'],['customer','Customer']];
 $stmtRole = $pdo->prepare('INSERT INTO roles(code,name,created_at) VALUES(?,?,?)');
 foreach ($roles as $r) $stmtRole->execute([$r[0], $r[1], $now]);
 
@@ -288,7 +291,7 @@ $perms = [['read','Read'],['write','Write'],['approve','Approve']];
 $stmtPerm = $pdo->prepare('INSERT INTO permissions(code,name,created_at) VALUES(?,?,?)');
 foreach ($perms as $p) $stmtPerm->execute([$p[0], $p[1], $now]);
 
-$resources = ['recipe','booking','operations','payment','notification','file','reporting','admin'];
+$resources = ['recipe','booking','booking_ops','operations','payment','notification','file','reporting','admin'];
 $stmtRes = $pdo->prepare('INSERT INTO resources(code,name,created_at) VALUES(?,?,?)');
 foreach ($resources as $r) $stmtRes->execute([$r, ucfirst($r), $now]);
 
@@ -310,6 +313,29 @@ $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['recipe'], $
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['write'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['notification'], $now]);
+$stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['booking_ops'], $now]);
+$stmtRpr->execute([$roleMap['ops_staff'], $permMap['write'], $resMap['booking_ops'], $now]);
+$stmtRpr->execute([$roleMap['ops_staff'], $permMap['approve'], $resMap['booking_ops'], $now]);
+
+// Manager: read/write for operations, recipes, bookings, notifications, files, reporting
+foreach (['recipe','booking','operations','notification','file','reporting'] as $res) {
+    $stmtRpr->execute([$roleMap['manager'], $permMap['read'], $resMap[$res], $now]);
+    $stmtRpr->execute([$roleMap['manager'], $permMap['write'], $resMap[$res], $now]);
+}
+$stmtRpr->execute([$roleMap['manager'], $permMap['approve'], $resMap['booking'], $now]);
+
+// Finance: read/write/approve for payments, read for reporting and booking
+foreach (['read','write','approve'] as $perm) {
+    $stmtRpr->execute([$roleMap['finance'], $permMap[$perm], $resMap['payment'], $now]);
+}
+$stmtRpr->execute([$roleMap['finance'], $permMap['read'], $resMap['reporting'], $now]);
+$stmtRpr->execute([$roleMap['finance'], $permMap['read'], $resMap['booking'], $now]);
+
+// Customer: read recipes, read/write bookings, read notifications, read booking pickup-points
+$stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['recipe'], $now]);
+$stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['booking'], $now]);
+$stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['booking'], $now]);
+$stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['notification'], $now]);
 
 $stmtScope = $pdo->prepare('INSERT INTO user_data_scopes(user_id,scope_type,scope_value,created_at) VALUES(?,?,?,?)');
 foreach (['store','warehouse','department'] as $scopeType) {
@@ -325,9 +351,9 @@ $pdo->exec("INSERT INTO zip4_reference(zip4_code,region_code,city,state_code,cre
 ('12345-6790','REG-001','Central City','CC','{$now}'),
 ('22345-6789','REG-002','North City','NC','{$now}')");
 
-$pdo->exec("INSERT INTO pickup_points(name,address,slot_size,active,created_at,region_code,latitude,longitude,service_radius_km) VALUES
-('Central Pantry','100 Main St',1,1,'{$now}','REG-001',40.7128,-74.0060,12.87),
-('North Community Hub','22 Pine Ave',5,1,'{$now}','REG-001',40.7306,-73.9352,12.87)");
+$pdo->exec("INSERT INTO pickup_points(name,address,slot_size,active,created_at,region_code,latitude,longitude,service_radius_km,store_id,warehouse_id,department_id) VALUES
+('Central Pantry','100 Main St',1,1,'{$now}','REG-001',40.7128,-74.0060,12.87,'1','1','1'),
+('North Community Hub','22 Pine Ave',5,1,'{$now}','REG-001',40.7306,-73.9352,12.87,'1','1','1')");
 
 $pdo->exec("INSERT INTO search_synonyms(synonym,canonical_term,created_at) VALUES
 ('garbanzo','chickpea','{$now}'),('chickpeas','chickpea','{$now}'),('tomatos','tomato','{$now}')");

@@ -70,15 +70,6 @@ final class ReportingRepository
             $alerts[] = ['type' => 'stockout_rate', 'severity' => 'medium', 'rate' => $stockoutRate];
         }
 
-        foreach ($alerts as $alert) {
-            Db::name('anomaly_alerts')->insert([
-                'alert_type' => $alert['type'],
-                'severity' => $alert['severity'],
-                'payload' => json_encode($alert, JSON_UNESCAPED_UNICODE),
-                'created_at' => date('Y-m-d H:i:s'),
-            ]);
-        }
-
         return [
             'recent_bookings_7d' => $recentBookings,
             'oversell_count' => $oversell,
@@ -86,6 +77,28 @@ final class ReportingRepository
             'stockout_rate_today' => $stockoutRate,
             'alerts' => $alerts,
         ];
+    }
+
+    public function persistAlerts(array $alerts): int
+    {
+        $today = date('Y-m-d');
+        $persisted = 0;
+        foreach ($alerts as $alert) {
+            $existing = Db::name('anomaly_alerts')
+                ->where('alert_type', $alert['type'])
+                ->whereDay('created_at', $today)
+                ->count();
+            if ($existing === 0) {
+                Db::name('anomaly_alerts')->insert([
+                    'alert_type' => $alert['type'],
+                    'severity' => $alert['severity'],
+                    'payload' => json_encode($alert, JSON_UNESCAPED_UNICODE),
+                    'created_at' => date('Y-m-d H:i:s'),
+                ]);
+                $persisted++;
+            }
+        }
+        return $persisted;
     }
 
     public function exportBookingsCsv(array $scopes = [], array $authUser = []): string
@@ -107,30 +120,6 @@ final class ReportingRepository
 
     private function applyDataScopes($query, string $alias, array $scopes, array $authUser): void
     {
-        if ((string) ($authUser['role'] ?? '') === 'admin') {
-            return;
-        }
-
-        $store = $scopes['store'] ?? [];
-        $warehouse = $scopes['warehouse'] ?? [];
-        $department = $scopes['department'] ?? [];
-
-        if ($store !== []) {
-            $query->whereIn($alias . '.store_id', $store);
-        } elseif (!empty($authUser['store_id'])) {
-            $query->where($alias . '.store_id', $authUser['store_id']);
-        }
-
-        if ($warehouse !== []) {
-            $query->whereIn($alias . '.warehouse_id', $warehouse);
-        } elseif (!empty($authUser['warehouse_id'])) {
-            $query->where($alias . '.warehouse_id', $authUser['warehouse_id']);
-        }
-
-        if ($department !== []) {
-            $query->whereIn($alias . '.department_id', $department);
-        } elseif (!empty($authUser['department_id'])) {
-            $query->where($alias . '.department_id', $authUser['department_id']);
-        }
+        \app\service\ScopeHelper::applyStandardScopes($query, $alias, $scopes, $authUser);
     }
 }

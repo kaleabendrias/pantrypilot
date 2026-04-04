@@ -30,6 +30,18 @@ final class IdentityRepository
         ]);
     }
 
+    public function assignRoleByCode(int $userId, string $roleCode): void
+    {
+        $role = Db::name('roles')->where('code', $roleCode)->find();
+        if ($role) {
+            Db::name('user_roles')->insert([
+                'user_id' => $userId,
+                'role_id' => (int) $role['id'],
+                'created_at' => date('Y-m-d H:i:s'),
+            ]);
+        }
+    }
+
     public function incrementFailedLogin(int $userId, int $attempts, ?string $lockedUntil): void
     {
         Db::name('users')->where('id', $userId)->update([

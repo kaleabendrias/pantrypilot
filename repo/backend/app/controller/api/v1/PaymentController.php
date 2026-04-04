@@ -5,13 +5,30 @@ namespace app\controller\api\v1;
 
 use app\BaseController;
 use app\common\JsonResponse;
+use app\service\AdministrationService;
+use app\service\BookingService;
 use app\service\PaymentService;
 
 final class PaymentController extends BaseController
 {
-    public function __construct(\think\App $app, private readonly PaymentService $paymentService)
-    {
+    public function __construct(
+        \think\App $app,
+        private readonly PaymentService $paymentService,
+        private readonly BookingService $bookingService,
+        private readonly AdministrationService $administrationService
+    ) {
         parent::__construct($app);
+    }
+
+    public function issueReauth()
+    {
+        try {
+            $authUser = $this->request->middleware('auth_user', []);
+            $password = (string) $this->request->post('password', '');
+            return JsonResponse::success($this->administrationService->issueCriticalReauthToken((int) ($authUser['id'] ?? 0), $password));
+        } catch (\Throwable $e) {
+            return JsonResponse::error($e->getMessage(), 401);
+        }
     }
 
     public function index()
@@ -33,6 +50,17 @@ final class PaymentController extends BaseController
         try {
             $payload = $this->request->post();
             $authUser = $this->request->middleware('auth_user', []);
+            $scopes = $this->request->middleware('data_scopes', []);
+            $bookingId = (int) ($payload['booking_id'] ?? 0);
+            if ($bookingId < 1) {
+                return JsonResponse::error('booking_id is required', 422);
+            }
+            if (!$this->bookingService->bookingExists($bookingId)) {
+                return JsonResponse::error('Booking not found', 404);
+            }
+            if (!$this->bookingService->canAccessBooking($bookingId, $scopes, $authUser)) {
+                return JsonResponse::error('Forbidden', 403);
+            }
             $payload['store_id'] = $authUser['store_id'] ?? null;
             $payload['warehouse_id'] = $authUser['warehouse_id'] ?? null;
             $payload['department_id'] = $authUser['department_id'] ?? null;
@@ -40,6 +68,25 @@ final class PaymentController extends BaseController
         } catch (\Throwable $e) {
             return $this->respondException($e, 422);
         }
+    }
+
+    public function listBatches()
+    {
+        $page = (int) $this->request->get('page', 1);
+        $perPage = (int) $this->request->get('per_page', 20);
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        return JsonResponse::success($this->paymentService->listBatches($page, $perPage, $scopes, $authUser));
+    }
+
+    public function listIssues()
+    {
+        $batchRef = (string) $this->request->get('batch_ref', '');
+        $page = (int) $this->request->get('page', 1);
+        $perPage = (int) $this->request->get('per_page', 50);
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        return JsonResponse::success($this->paymentService->listIssues($batchRef, $page, $perPage, $scopes, $authUser));
     }
 
     public function reconcile()
@@ -54,7 +101,20 @@ final class PaymentController extends BaseController
     public function createGatewayOrder()
     {
         try {
-            return JsonResponse::success($this->paymentService->createGatewayOrder($this->request->post()), 'Gateway order created', 201);
+            $payload = $this->request->post();
+            $authUser = $this->request->middleware('auth_user', []);
+            $scopes = $this->request->middleware('data_scopes', []);
+            $bookingId = (int) ($payload['booking_id'] ?? 0);
+            if ($bookingId < 1) {
+                return JsonResponse::error('booking_id is required', 422);
+            }
+            if (!$this->bookingService->bookingExists($bookingId)) {
+                return JsonResponse::error('Booking not found', 404);
+            }
+            if (!$this->bookingService->canAccessBooking($bookingId, $scopes, $authUser)) {
+                return JsonResponse::error('Forbidden', 403);
+            }
+            return JsonResponse::success($this->paymentService->createGatewayOrder($payload), 'Gateway order created', 201);
         } catch (\Throwable $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }
@@ -72,14 +132,18 @@ final class PaymentController extends BaseController
 
     public function autoCancelGatewayOrders()
     {
-        return JsonResponse::success($this->paymentService->autoCancelExpiredGatewayOrders(), 'Expired gateway orders cancelled');
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        return JsonResponse::success($this->paymentService->autoCancelExpiredGatewayOrders($scopes, $authUser), 'Expired gateway orders cancelled');
     }
 
     public function dailyReconcile()
     {
         try {
             $date = (string) $this->request->post('date', date('Y-m-d'));
-            return JsonResponse::success($this->paymentService->dailyReconciliation($date), 'Daily reconciliation completed');
+            $scopes = $this->request->middleware('data_scopes', []);
+            $authUser = $this->request->middleware('auth_user', []);
+            return JsonResponse::success($this->paymentService->dailyReconciliation($date, $scopes, $authUser), 'Daily reconciliation completed');
         } catch (\Throwable $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }

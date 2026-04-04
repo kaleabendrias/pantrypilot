@@ -199,7 +199,15 @@ CREATE TABLE IF NOT EXISTS pickup_points (
   address VARCHAR(255) NOT NULL,
   slot_size INT UNSIGNED NOT NULL DEFAULT 10,
   active TINYINT(1) NOT NULL DEFAULT 1,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  region_code VARCHAR(20) NULL,
+  latitude DECIMAL(10,7) NULL,
+  longitude DECIMAL(10,7) NULL,
+  service_radius_km DECIMAL(6,2) NOT NULL DEFAULT 10.00,
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_pickup_scope (store_id, warehouse_id, department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -209,9 +217,19 @@ CREATE TABLE IF NOT EXISTS bookings (
   user_id BIGINT UNSIGNED NOT NULL,
   pickup_point_id BIGINT UNSIGNED NOT NULL,
   pickup_at DATETIME NOT NULL,
+  slot_start DATETIME NULL,
+  slot_end DATETIME NULL,
   quantity INT UNSIGNED NOT NULL DEFAULT 1,
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
   note VARCHAR(255) NULL,
+  arrived_at DATETIME NULL,
+  checked_in_by BIGINT UNSIGNED NULL,
+  no_show_marked_at DATETIME NULL,
+  customer_zip4 VARCHAR(10) NULL,
+  customer_region_code VARCHAR(20) NULL,
+  customer_latitude DECIMAL(10,7) NULL,
+  customer_longitude DECIMAL(10,7) NULL,
+  distance_km DECIMAL(8,3) NULL,
   store_id VARCHAR(60) NULL,
   warehouse_id VARCHAR(60) NULL,
   department_id VARCHAR(60) NULL,
@@ -246,8 +264,12 @@ CREATE TABLE IF NOT EXISTS message_events (
   payload JSON NOT NULL,
   state VARCHAR(20) NOT NULL DEFAULT 'queued',
   dispatched_at DATETIME NULL,
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_message_state (state)
+  INDEX idx_message_state (state),
+  INDEX idx_message_scope (store_id, warehouse_id, department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -258,6 +280,7 @@ CREATE TABLE IF NOT EXISTS payments (
   method VARCHAR(30) NOT NULL DEFAULT 'cash',
   status VARCHAR(20) NOT NULL DEFAULT 'initiated',
   paid_at DATETIME NULL,
+  payer_name_enc TEXT NULL,
   store_id VARCHAR(60) NULL,
   warehouse_id VARCHAR(60) NULL,
   department_id VARCHAR(60) NULL,
@@ -276,7 +299,11 @@ CREATE TABLE IF NOT EXISTS reconciliation (
   actual_total DECIMAL(10,2) NOT NULL,
   variance DECIMAL(10,2) NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'open',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  store_id VARCHAR(60) NULL,
+  warehouse_id VARCHAR(60) NULL,
+  department_id VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_reconciliation_scope (store_id, warehouse_id, department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS attachments (
@@ -287,6 +314,11 @@ CREATE TABLE IF NOT EXISTS attachments (
   mime_type VARCHAR(100) NOT NULL,
   storage_path VARCHAR(255) NOT NULL,
   size_bytes BIGINT UNSIGNED NOT NULL,
+  sha256 CHAR(64) NULL,
+  magic_verified TINYINT(1) NOT NULL DEFAULT 0,
+  watermarked TINYINT(1) NOT NULL DEFAULT 0,
+  hotlink_token CHAR(64) NULL,
+  signed_url_expire_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_attachments_owner (owner_type, owner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -298,6 +330,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   target_type VARCHAR(50) NOT NULL,
   target_id VARCHAR(60) NOT NULL,
   metadata JSON NULL,
+  prev_hash CHAR(64) NULL,
+  hash_current CHAR(64) NULL,
+  ip_address VARCHAR(45) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_audit_target (target_type, target_id),
   CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
@@ -307,11 +342,21 @@ INSERT INTO stores (code, name) VALUES ('S001', 'Main Store') ON DUPLICATE KEY U
 INSERT INTO warehouses (code, name) VALUES ('W001', 'Main Warehouse') ON DUPLICATE KEY UPDATE name = VALUES(name);
 INSERT INTO departments (code, name) VALUES ('D001', 'General Department') ON DUPLICATE KEY UPDATE name = VALUES(name);
 
+-- Default admin seed: password MUST be changed on first login.
+-- The hash below corresponds to a temporary bootstrap password that must be rotated.
+-- Set PANTRYPILOT_ADMIN_PASSWORD_HASH env var to override at deploy time.
 INSERT INTO users (username, password_hash, display_name, role, store_id, warehouse_id, department_id)
 VALUES ('admin', '$2y$10$coP6EPopPcPJgzllcZkj9uuCPeokmqbzz4Wse8bqktO0l8c4zQey.', 'System Admin', 'admin', 1, 1, 1)
 ON DUPLICATE KEY UPDATE username = username;
+-- WARNING: This is a bootstrap-only seed credential. Rotate immediately after first boot.
 
-INSERT INTO roles (code, name) VALUES ('admin', 'Administrator') ON DUPLICATE KEY UPDATE name = VALUES(name);
+INSERT INTO roles (code, name) VALUES
+('admin', 'Administrator'),
+('ops_staff', 'Operations Staff'),
+('manager', 'Operations Manager'),
+('finance', 'Finance Admin'),
+('customer', 'Customer')
+ON DUPLICATE KEY UPDATE name = VALUES(name);
 INSERT INTO permissions (code, name) VALUES
 ('read', 'Read Access'),
 ('write', 'Write Access'),
@@ -320,6 +365,7 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 INSERT INTO resources (code, name) VALUES
 ('recipe', 'Recipes'),
 ('booking', 'Bookings'),
+('booking_ops', 'Booking Operations'),
 ('operations', 'Operations'),
 ('payment', 'Payments'),
 ('notification', 'Notifications'),
@@ -336,6 +382,62 @@ SELECT r.id, p.id, rs.id FROM roles r
 JOIN permissions p
 JOIN resources rs
 WHERE r.code = 'admin';
+
+-- Customer: read recipes, read/write bookings, read notifications
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'recipe';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'booking';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'customer' AND p.code = 'write' AND rs.code = 'booking';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'notification';
+
+-- Operations Staff: read recipes, read/write bookings, read notifications
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'read' AND rs.code = 'recipe';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'read' AND rs.code = 'booking';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'write' AND rs.code = 'booking';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'approve' AND rs.code = 'booking';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'read' AND rs.code = 'notification';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code IN ('read','write','approve') AND rs.code = 'booking_ops';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'read' AND rs.code = 'operations';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code = 'write' AND rs.code = 'operations';
+
+-- Manager: read/write operations, recipes, bookings, notifications, files, reporting + approve bookings
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'manager' AND p.code IN ('read','write') AND rs.code IN ('recipe','booking','operations','notification','file','reporting');
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'manager' AND p.code = 'approve' AND rs.code = 'booking';
+
+-- Finance: read/write/approve payments, read reporting and bookings
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'finance' AND p.code IN ('read','write','approve') AND rs.code = 'payment';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'finance' AND p.code = 'read' AND rs.code IN ('reporting','booking');
 
 INSERT IGNORE INTO user_data_scopes (user_id, scope_type, scope_value)
 SELECT id, 'store', '1' FROM users WHERE username='admin';
@@ -358,17 +460,11 @@ INSERT INTO ingredients (display_name, normalized_name) VALUES
 ('Onion', 'onion')
 ON DUPLICATE KEY UPDATE display_name = VALUES(display_name);
 
-INSERT INTO pickup_points (name, address, slot_size, active)
+INSERT INTO pickup_points (name, address, slot_size, active, store_id, warehouse_id, department_id)
 VALUES
-('Central Pantry', '100 Main St', 20, 1),
-('North Community Hub', '22 Pine Ave', 12, 1)
+('Central Pantry', '100 Main St', 20, 1, '1', '1', '1'),
+('North Community Hub', '22 Pine Ave', 12, 1, '1', '1', '1')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
-
-ALTER TABLE pickup_points
-  ADD COLUMN IF NOT EXISTS region_code VARCHAR(20) NULL,
-  ADD COLUMN IF NOT EXISTS latitude DECIMAL(10,7) NULL,
-  ADD COLUMN IF NOT EXISTS longitude DECIMAL(10,7) NULL,
-  ADD COLUMN IF NOT EXISTS service_radius_km DECIMAL(6,2) NOT NULL DEFAULT 10.00;
 
 UPDATE pickup_points SET region_code='REG-001', latitude=40.7128, longitude=-74.0060, service_radius_km=12.87 WHERE name='Central Pantry';
 UPDATE pickup_points SET region_code='REG-001', latitude=40.7306, longitude=-73.9352, service_radius_km=12.87 WHERE name='North Community Hub';
@@ -386,18 +482,6 @@ CREATE TABLE IF NOT EXISTS pickup_slots (
   INDEX idx_slot_lookup (pickup_point_id, slot_start),
   CONSTRAINT fk_pickup_slot_point FOREIGN KEY (pickup_point_id) REFERENCES pickup_points(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-ALTER TABLE bookings
-  ADD COLUMN IF NOT EXISTS slot_start DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS slot_end DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS arrived_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS checked_in_by BIGINT UNSIGNED NULL,
-  ADD COLUMN IF NOT EXISTS no_show_marked_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS customer_zip4 VARCHAR(10) NULL,
-  ADD COLUMN IF NOT EXISTS customer_region_code VARCHAR(20) NULL,
-  ADD COLUMN IF NOT EXISTS customer_latitude DECIMAL(10,7) NULL,
-  ADD COLUMN IF NOT EXISTS customer_longitude DECIMAL(10,7) NULL,
-  ADD COLUMN IF NOT EXISTS distance_km DECIMAL(8,3) NULL;
 
 CREATE TABLE IF NOT EXISTS booking_blacklist (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -458,28 +542,6 @@ CREATE TABLE IF NOT EXISTS message_templates (
   INDEX idx_message_template_scope (store_id, warehouse_id, department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE campaigns
-  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
-  ADD INDEX IF NOT EXISTS idx_campaign_scope (store_id, warehouse_id, department_id);
-
-ALTER TABLE homepage_modules
-  DROP INDEX IF EXISTS module_key,
-  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
-  ADD INDEX IF NOT EXISTS idx_homepage_module_scope (store_id, warehouse_id, department_id),
-  ADD UNIQUE KEY IF NOT EXISTS uk_homepage_module_scope (module_key, store_id, warehouse_id, department_id);
-
-ALTER TABLE message_templates
-  DROP INDEX IF EXISTS template_code,
-  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
-  ADD INDEX IF NOT EXISTS idx_message_template_scope (store_id, warehouse_id, department_id),
-  ADD UNIQUE KEY IF NOT EXISTS uk_message_template_scope (template_code, store_id, warehouse_id, department_id);
-
 CREATE TABLE IF NOT EXISTS user_message_preferences (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
@@ -534,12 +596,6 @@ CREATE TABLE IF NOT EXISTS gateway_callbacks (
   UNIQUE KEY uk_callback_transaction (transaction_ref)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE gateway_callbacks
-  DROP COLUMN IF EXISTS callback_hash;
-
-ALTER TABLE gateway_callbacks
-  ADD UNIQUE KEY IF NOT EXISTS uk_callback_transaction (transaction_ref);
-
 CREATE TABLE IF NOT EXISTS finance_reconciliation_items (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   batch_ref VARCHAR(60) NOT NULL,
@@ -572,18 +628,6 @@ CREATE TABLE IF NOT EXISTS critical_reauth_tokens (
   CONSTRAINT fk_reauth_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE audit_logs
-  ADD COLUMN IF NOT EXISTS prev_hash CHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS hash_current CHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45) NULL;
-
-ALTER TABLE attachments
-  ADD COLUMN IF NOT EXISTS sha256 CHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS magic_verified TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS watermarked TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS hotlink_token CHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS signed_url_expire_at DATETIME NULL;
-
 CREATE TABLE IF NOT EXISTS stock_snapshots (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   sku VARCHAR(60) NOT NULL,
@@ -596,12 +640,6 @@ CREATE TABLE IF NOT EXISTS stock_snapshots (
   INDEX idx_stock_date (snapshot_date),
   INDEX idx_stock_scope (store_id, warehouse_id, department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-ALTER TABLE stock_snapshots
-  ADD COLUMN IF NOT EXISTS store_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(60) NULL,
-  ADD COLUMN IF NOT EXISTS department_id VARCHAR(60) NULL,
-  ADD INDEX IF NOT EXISTS idx_stock_scope (store_id, warehouse_id, department_id);
 
 CREATE TABLE IF NOT EXISTS anomaly_alerts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -637,5 +675,3 @@ ON DUPLICATE KEY UPDATE
   city = VALUES(city),
   state_code = VALUES(state_code);
 
-ALTER TABLE payments
-  ADD COLUMN IF NOT EXISTS payer_name_enc TEXT NULL;

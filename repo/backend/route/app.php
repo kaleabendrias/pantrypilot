@@ -33,6 +33,7 @@ Route::group('api/v1', function () {
     Route::post('bookings/check-in', [BookingController::class, 'checkIn']);
     Route::post('bookings/no-show-sweep', [BookingController::class, 'runNoShowSweep']);
     Route::get('bookings/:bookingId/dispatch-note', [BookingController::class, 'dispatchNote']);
+    Route::get('bookings/pickup-points', [BookingController::class, 'pickupPoints']);
     Route::get('pickup-points', [BookingController::class, 'pickupPoints']);
     Route::get('bookings', [BookingController::class, 'index']);
     Route::post('bookings', [BookingController::class, 'create']);
@@ -48,10 +49,13 @@ Route::group('api/v1', function () {
     Route::post('payments/gateway/orders', [PaymentController::class, 'createGatewayOrder']);
     Route::post('payments/gateway/callback', [PaymentController::class, 'gatewayCallback']);
     Route::post('payments/gateway/auto-cancel', [PaymentController::class, 'autoCancelGatewayOrders']);
+    Route::get('payments/reconcile/batches', [PaymentController::class, 'listBatches']);
+    Route::get('payments/reconcile/issues', [PaymentController::class, 'listIssues']);
     Route::post('payments/reconcile/daily', [PaymentController::class, 'dailyReconcile']);
     Route::post('payments/reconcile/repair', [PaymentController::class, 'repairIssue']);
     Route::post('payments/reconcile/close', [PaymentController::class, 'closeBatch']);
     Route::post('payments/reconcile', [PaymentController::class, 'reconcile']);
+    Route::post('payments/reauth', [PaymentController::class, 'issueReauth']);
     Route::post('payments/refund', [PaymentController::class, 'refund']);
     Route::post('payments/adjust', [PaymentController::class, 'adjust']);
     Route::get('payments', [PaymentController::class, 'index']);
@@ -74,6 +78,7 @@ Route::group('api/v1', function () {
 
     Route::get('reporting/dashboard', [ReportingController::class, 'dashboard']);
     Route::get('reporting/anomalies', [ReportingController::class, 'anomalies']);
+    Route::post('reporting/anomalies/generate', [ReportingController::class, 'generateAlerts']);
     Route::get('reporting/exports/bookings-csv', [ReportingController::class, 'exportBookingsCsv']);
 
     Route::get('admin/users', [AdministrationController::class, 'users']);

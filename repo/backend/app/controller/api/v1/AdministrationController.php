@@ -17,14 +17,18 @@ final class AdministrationController extends BaseController
     public function users()
     {
         $q = (string) ($this->request->get('q') ?? '');
-        return JsonResponse::success(['items' => $this->administrationService->users($q)]);
+        $authUser = $this->request->middleware('auth_user', []);
+        $scopes = $this->request->middleware('data_scopes', []);
+        return JsonResponse::success(['items' => $this->administrationService->users($q, $scopes, $authUser)]);
     }
 
     public function auditLogs()
     {
         $page = (int) $this->request->get('page', 1);
         $perPage = (int) $this->request->get('per_page', 20);
-        return JsonResponse::success($this->administrationService->auditLogs($page, $perPage));
+        $authUser = $this->request->middleware('auth_user', []);
+        $scopes = $this->request->middleware('data_scopes', []);
+        return JsonResponse::success($this->administrationService->auditLogs($page, $perPage, $scopes, $authUser));
     }
 
     public function issueReauthToken()
@@ -113,7 +117,10 @@ final class AdministrationController extends BaseController
     public function createRole()
     {
         try {
-            return JsonResponse::success($this->administrationService->createRole($this->request->post()), 'Role created', 201);
+            $authUser = $this->request->middleware('auth_user', []);
+            return JsonResponse::success($this->administrationService->createRole($this->request->post(), $authUser), 'Role created', 201);
+        } catch (\app\exception\ForbiddenException $e) {
+            return JsonResponse::error($e->getMessage(), 403);
         } catch (\Throwable $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }
@@ -122,7 +129,10 @@ final class AdministrationController extends BaseController
     public function grantRolePermissionResource()
     {
         try {
-            return JsonResponse::success($this->administrationService->grantRolePermissionResource($this->request->post()), 'Granted', 201);
+            $authUser = $this->request->middleware('auth_user', []);
+            return JsonResponse::success($this->administrationService->grantRolePermissionResource($this->request->post(), $authUser), 'Granted', 201);
+        } catch (\app\exception\ForbiddenException $e) {
+            return JsonResponse::error($e->getMessage(), 403);
         } catch (\Throwable $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }
@@ -131,7 +141,11 @@ final class AdministrationController extends BaseController
     public function assignRoleToUser()
     {
         try {
-            return JsonResponse::success($this->administrationService->assignRoleToUser($this->request->post()), 'Assigned', 201);
+            $authUser = $this->request->middleware('auth_user', []);
+            $scopes = $this->request->middleware('data_scopes', []);
+            return JsonResponse::success($this->administrationService->assignRoleToUser($this->request->post(), $authUser, $scopes), 'Assigned', 201);
+        } catch (\app\exception\ForbiddenException $e) {
+            return JsonResponse::error($e->getMessage(), 403);
         } catch (\Throwable $e) {
             return JsonResponse::error($e->getMessage(), 422);
         }

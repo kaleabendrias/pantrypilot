@@ -75,6 +75,7 @@
             <option value="">Any budget</option>
             <option value="15">Under $15</option>
           </select>
+          <input id="recipeSearchTags" placeholder="tags (e.g. vegan, gluten-free)" />
           <select id="recipeSearchRankMode">
             <option value="popular">Rank: Popular</option>
             <option value="time-saving">Rank: Time-saving</option>
@@ -145,11 +146,26 @@
           <button class="layui-btn" id="btnCheckIn">Check-in Selected Booking</button>
           <button class="layui-btn layui-btn-normal" id="btnSweepNoShow">Run No-show Sweep</button>
           <button class="layui-btn" id="btnDispatchNote">Print Dispatch (Selected)</button>
+        </div>
+        <div class="toolbar">
+          <button class="layui-btn" id="btnLoadCampaigns">Load Campaigns</button>
+          <button class="layui-btn layui-btn-normal" id="btnCreateCampaign">Create Campaign</button>
           <button class="layui-btn" id="btnLoadModules">Load Homepage Modules</button>
           <button class="layui-btn" id="btnSaveModule">Save Module</button>
+          <button class="layui-btn" id="btnLoadTemplates">Load Templates</button>
           <button class="layui-btn" id="btnSaveTemplate">Save Template</button>
         </div>
+        <div class="toolbar" id="managerDashboardControls">
+          <button class="layui-btn" id="btnManagerDashboard">Manager Dashboard</button>
+          <button class="layui-btn" id="btnManagerAnomalies">Anomalies</button>
+          <button class="layui-btn" id="btnManagerExportCsv">Export CSV</button>
+        </div>
         <div class="search-panel">
+          <input id="campaignName" placeholder="campaign name" />
+          <input id="campaignSlot" placeholder="campaign slot" />
+          <input id="campaignStartAt" type="datetime-local" placeholder="start at" />
+          <input id="campaignEndAt" type="datetime-local" placeholder="end at" />
+          <input id="campaignBudget" type="number" step="0.01" min="0" placeholder="budget" />
           <input id="moduleKey" placeholder="module key" />
           <input id="moduleTitle" placeholder="module title" />
           <input id="moduleBannerImage" placeholder="module banner image" />
@@ -172,6 +188,8 @@
           <button class="layui-btn" id="btnDailyRecon">Daily Reconcile</button>
         </div>
         <div class="toolbar">
+          <button class="layui-btn" id="btnListBatches">Review Batches</button>
+          <button class="layui-btn" id="btnListIssues">Review Issues</button>
           <button class="layui-btn" id="btnIssueReauth">Issue Reauth</button>
           <button class="layui-btn" id="btnRepairIssue">Repair Issue</button>
           <button class="layui-btn" id="btnCloseBatch">Close Batch</button>
@@ -245,9 +263,29 @@
           <button class="layui-btn" id="btnOpsDashboard">Ops Metrics</button>
           <button class="layui-btn" id="btnAnomalies">Anomalies</button>
           <button class="layui-btn" id="btnExportCsv">Export CSV</button>
+        </div>
+        <div class="toolbar">
           <button class="layui-btn layui-btn-normal" id="btnCreateRole">Create Role</button>
           <button class="layui-btn" id="btnLoadRoles">Load Roles</button>
           <button class="layui-btn" id="btnLoadPerms">Load Perms</button>
+          <button class="layui-btn" id="btnEnableUser">Enable User</button>
+          <button class="layui-btn layui-btn-danger" id="btnDisableUser">Disable User</button>
+          <button class="layui-btn" id="btnResetPassword">Reset Password</button>
+        </div>
+        <div class="toolbar">
+          <button class="layui-btn" id="btnGrantPermission">Grant Permission</button>
+          <button class="layui-btn" id="btnAssignRole">Assign Role</button>
+          <button class="layui-btn" id="btnUpdateScopes">Update Scopes</button>
+        </div>
+        <div class="search-panel">
+          <input id="adminTargetUserId" type="number" min="1" placeholder="target user id" />
+          <input id="adminNewPassword" type="password" placeholder="new password (for reset)" />
+          <input id="adminRoleId" type="number" min="1" placeholder="role id" />
+          <input id="adminPermId" type="number" min="1" placeholder="permission id" />
+          <input id="adminResourceId" type="number" min="1" placeholder="resource id" />
+          <input id="adminScopeStore" placeholder="store scope ids (comma)" />
+          <input id="adminScopeWarehouse" placeholder="warehouse scope ids (comma)" />
+          <input id="adminScopeDept" placeholder="department scope ids (comma)" />
         </div>
         <div id="adminFeedback" class="feedback"></div>
         <div class="split-grid">

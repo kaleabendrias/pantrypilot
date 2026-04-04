@@ -24,9 +24,19 @@ services:
         condition: service_healthy
     ports:
       - "8000:80"
+    environment:
+      DB_HOST: mysql
+      DB_NAME: pantrypilot
+      DB_USER: ${DB_USER:-pantry}
+      DB_PASS: ${DB_PASS:-pantrypass}
+      DB_PORT: "3306"
+      PANTRYPILOT_GATEWAY_HMAC_SECRET: ${PANTRYPILOT_GATEWAY_HMAC_SECRET:-change_me_gateway_hmac_secret_64chars_min}
+      PANTRYPILOT_CRYPTO_KEY: ${PANTRYPILOT_CRYPTO_KEY:-change_me_crypto_key_exactly32b!}
+      PANTRYPILOT_CRYPTO_IV: ${PANTRYPILOT_CRYPTO_IV:-change_me_16bytes}
     volumes:
       - ./backend:/var/www/html
       - ./tests:/workspace/tests:ro
+      - ./frontend:/workspace/frontend:ro
       - ./docker/mysql/init:/workspace/db_init:ro
     healthcheck:
       test: ["CMD", "php", "-r", "exit((@file_get_contents('http://localhost/')!==false)?0:1);"]
@@ -45,10 +55,10 @@ services:
     ports:
       - "3307:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: pantrypilot
-      MYSQL_USER: pantry
-      MYSQL_PASSWORD: pantrypass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${DB_NAME:-pantrypilot}
+      MYSQL_USER: ${DB_USER:-pantry}
+      MYSQL_PASSWORD: ${DB_PASS:-pantrypass}
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro

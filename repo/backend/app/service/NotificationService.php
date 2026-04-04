@@ -23,15 +23,46 @@ final class NotificationService
         $id = $this->notificationAdapter->queue(
             $payload['event_type'] ?? 'generic',
             $payload['channel'] ?? 'kiosk',
-            $payload['payload'] ?? []
+            $payload['payload'] ?? [],
+            $payload['store_id'] ?? null,
+            $payload['warehouse_id'] ?? null,
+            $payload['department_id'] ?? null
         );
 
         return ['id' => $id];
     }
 
-    public function events(): array
+    public function events(array $scopes = [], array $authUser = []): array
     {
-        return Db::name('message_events')->order('id', 'desc')->limit(200)->select()->toArray();
+        if (ScopeHelper::isGlobalAdmin($authUser)) {
+            return Db::name('message_events')->order('id', 'desc')->limit(200)->select()->toArray();
+        }
+        $query = Db::name('message_events')->alias('me');
+        $store = $scopes['store'] ?? [];
+        $warehouse = $scopes['warehouse'] ?? [];
+        $department = $scopes['department'] ?? [];
+        if ($store !== []) {
+            $query->whereIn('me.store_id', $store);
+        } elseif (!empty($authUser['store_id'])) {
+            $query->where(function ($q) use ($authUser) {
+                $q->where('me.store_id', (string) $authUser['store_id'])->whereOr('me.store_id', null);
+            });
+        }
+        if ($warehouse !== []) {
+            $query->whereIn('me.warehouse_id', $warehouse);
+        } elseif (!empty($authUser['warehouse_id'])) {
+            $query->where(function ($q) use ($authUser) {
+                $q->where('me.warehouse_id', (string) $authUser['warehouse_id'])->whereOr('me.warehouse_id', null);
+            });
+        }
+        if ($department !== []) {
+            $query->whereIn('me.department_id', $department);
+        } elseif (!empty($authUser['department_id'])) {
+            $query->where(function ($q) use ($authUser) {
+                $q->where('me.department_id', (string) $authUser['department_id'])->whereOr('me.department_id', null);
+            });
+        }
+        return $query->order('id', 'desc')->limit(200)->select()->toArray();
     }
 
     public function setOptOut(int $userId, bool $optOut): array
@@ -58,7 +89,7 @@ final class NotificationService
             throw new \RuntimeException('Recipient not found');
         }
 
-        if ((string) ($authUser['role'] ?? '') !== 'admin' && !$this->recipientInScope($recipient, $scopes, $authUser)) {
+        if (!ScopeHelper::isGlobalAdmin($authUser) && !$this->recipientInScope($recipient, $scopes, $authUser)) {
             throw new ForbiddenException('Forbidden');
         }
 
@@ -174,7 +205,7 @@ final class NotificationService
         $readQ = Db::name('message_center')->alias('m')->join('users u', 'u.id = m.user_id')->whereNotNull('m.read_at');
         $clickedQ = Db::name('message_center')->alias('m')->join('users u', 'u.id = m.user_id')->whereNotNull('m.clicked_at');
 
-        if ((string) ($authUser['role'] ?? '') !== 'admin') {
+        if (!ScopeHelper::isGlobalAdmin($authUser)) {
             $this->applyUserDataScopes($sentQ, 'u', $scopes, $authUser);
             $this->applyUserDataScopes($readQ, 'u', $scopes, $authUser);
             $this->applyUserDataScopes($clickedQ, 'u', $scopes, $authUser);

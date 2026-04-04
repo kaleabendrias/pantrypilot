@@ -33,13 +33,41 @@ final class BookingController extends BaseController
         try {
             $payload = $this->request->post();
             $authUser = $this->request->middleware('auth_user', []);
+            $scopes = $this->request->middleware('data_scopes', []);
             $payload['user_id'] = (int) ($authUser['id'] ?? 0);
-            $payload['store_id'] = $authUser['store_id'] ?? null;
-            $payload['warehouse_id'] = $authUser['warehouse_id'] ?? null;
-            $payload['department_id'] = $authUser['department_id'] ?? null;
             if ((int) $payload['user_id'] < 1) {
                 return JsonResponse::error('Unauthorized', 401);
             }
+            $recipeId = (int) ($payload['recipe_id'] ?? 0);
+            if ($recipeId < 1) {
+                return JsonResponse::error('recipe_id is required', 422);
+            }
+            if (!$this->bookingService->recipeExists($recipeId)) {
+                return JsonResponse::error('Recipe not found', 404);
+            }
+            if (!$this->bookingService->recipeBookable($recipeId)) {
+                return JsonResponse::error('Recipe is not available for booking', 422);
+            }
+            if (!$this->bookingService->canAccessRecipe($recipeId, $scopes, $authUser)) {
+                return JsonResponse::error('Forbidden', 403);
+            }
+            $pickupPointId = (int) ($payload['pickup_point_id'] ?? 0);
+            if ($pickupPointId < 1) {
+                return JsonResponse::error('pickup_point_id is required', 422);
+            }
+            $point = $this->bookingService->pickupPointById($pickupPointId);
+            if (!$point) {
+                return JsonResponse::error('Pickup point not found', 404);
+            }
+            if ((int) ($point['active'] ?? 0) !== 1) {
+                return JsonResponse::error('Pickup point is not active', 422);
+            }
+            if (!$this->bookingService->pickupPointInScope($pickupPointId, $scopes, $authUser)) {
+                return JsonResponse::error('Pickup point is not accessible', 403);
+            }
+            $payload['store_id'] = $point['store_id'] ?? $authUser['store_id'] ?? null;
+            $payload['warehouse_id'] = $point['warehouse_id'] ?? $authUser['warehouse_id'] ?? null;
+            $payload['department_id'] = $point['department_id'] ?? $authUser['department_id'] ?? null;
             return JsonResponse::success($this->bookingService->create($payload), 'Booking created', 201);
         } catch (\Throwable $e) {
             return $this->respondException($e, 422);
@@ -48,7 +76,9 @@ final class BookingController extends BaseController
 
     public function pickupPoints()
     {
-        return JsonResponse::success(['items' => $this->bookingService->pickupPoints()]);
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        return JsonResponse::success(['items' => $this->bookingService->pickupPoints($scopes, $authUser)]);
     }
 
     public function recipeDetail(int $recipeId)
@@ -75,6 +105,12 @@ final class BookingController extends BaseController
         $slotEnd = (string) $this->request->get('slot_end', '');
         if ($pickupPointId < 1 || $slotStart === '' || $slotEnd === '') {
             return JsonResponse::error('pickup_point_id, slot_start and slot_end are required', 422);
+        }
+
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        if (!$this->bookingService->pickupPointInScope($pickupPointId, $scopes, $authUser)) {
+            return JsonResponse::error('Forbidden', 403);
         }
 
         return JsonResponse::success($this->bookingService->slotCapacity($pickupPointId, $slotStart, $slotEnd));
@@ -106,12 +142,18 @@ final class BookingController extends BaseController
             return JsonResponse::error('Forbidden', 403);
         }
 
-        return JsonResponse::success(['checked_in' => $this->bookingService->checkIn($bookingId, $staffId)]);
+        try {
+            return JsonResponse::success(['checked_in' => $this->bookingService->checkIn($bookingId, $staffId)]);
+        } catch (\RuntimeException $e) {
+            return JsonResponse::error($e->getMessage(), 422);
+        }
     }
 
     public function runNoShowSweep()
     {
-        return JsonResponse::success($this->bookingService->autoClassifyNoShow(), 'No-show sweep completed');
+        $scopes = $this->request->middleware('data_scopes', []);
+        $authUser = $this->request->middleware('auth_user', []);
+        return JsonResponse::success($this->bookingService->autoClassifyNoShow($scopes, $authUser), 'No-show sweep completed');
     }
 
     public function dispatchNote(int $bookingId)

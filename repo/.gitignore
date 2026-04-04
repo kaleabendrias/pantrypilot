@@ -1,6 +1,7 @@
 backend/vendor/
-backend/runtime/*
-!backend/runtime/uploads/
+backend/runtime/log/*
+!backend/runtime/log/.gitkeep
 backend/runtime/uploads/*
 !backend/runtime/uploads/.gitkeep
 mysql_data/
+.env
