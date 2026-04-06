@@ -1,130 +1,107 @@
-# PantryPilot Prompt Questions and Interpretations
+# Required Document Description: Business Logic Questions Log
 
-Purpose of this file:
-- Record what was unclear in the original prompt.
-- Record how each unclear point was interpreted for implementation and documentation.
+## JWT or server session
+Question: Prompt text: "Identity supports JWT or server sessions." The requirement allows two options but does not force one.
+My Understanding: Either approach is acceptable as long as protected routes enforce authentication consistently and token/session expiry is enforceable.
+Solution: Chose a standards-compliant approach where either JWT-style bearer flow or server session semantics can satisfy the requirement if auth enforcement remains consistent.
 
-## 1. Identity and Authentication
+## Password complexity details beyond minimums
+Question: Prompt text: "at least 10 characters with one letter and one number." It does not define special characters or case rules.
+My Understanding: Only explicit constraints should be enforced: length >= 10, includes letter, includes number.
+Solution: Implemented validation only for the explicitly required minimum complexity.
 
-### Q1.1 JWT or server session?
-- Prompt text: "Identity supports JWT or server sessions"
-- Ambiguity: It allows two options but does not force one.
-- Interpretation used: Either is acceptable if protected routes require authentication consistently and logout/expiry rules are enforceable.
+## Fuzzy matching method for search
+Question: Prompt text: "minor typos still find matches," but no algorithm or threshold is specified.
+My Understanding: Any deterministic fuzzy strategy is acceptable if typo tolerance is demonstrable.
+Solution: Used deterministic fuzzy matching behavior so typo-tolerant search can be verified.
 
-### Q1.2 Password complexity details beyond minimums?
-- Prompt text: "at least 10 characters with one letter and one number"
-- Ambiguity: No special character or uppercase/lowercase requirement is specified.
-- Interpretation used: Enforce only what is explicitly required (>=10, letter, number).
+## Synonym source and governance
+Question: Prompt gives example "garbanzo" -> "chickpea" but does not require external dictionary sources.
+My Understanding: A local synonym dictionary/table is acceptable and better aligned with offline-first constraints.
+Solution: Implemented local synonym mapping for search term normalization.
 
-## 2. Search and Ranking
+## Ranking formula definitions
+Question: Prompt requires ranking by popular, time-saving, budget, and low-calorie, but no exact scoring model is provided.
+My Understanding: Deterministic mode-based ordering is sufficient.
+Solution: Implemented mode-specific ranking logic for each required ranking type.
 
-### Q2.1 Fuzzy matching method is unspecified.
-- Prompt text: "minor typos still find matches"
-- Ambiguity: No algorithm, distance threshold, or language model is mandated.
-- Interpretation used: Any deterministic fuzzy strategy is acceptable if typo tolerance is demonstrable in results.
+## Immediate UI feedback transport mode
+Question: Prompt requires immediate capacity feedback but does not mandate WebSocket/SSE vs request-response.
+My Understanding: Synchronous API checks are acceptable if users receive near-real-time availability feedback.
+Solution: Used API-driven slot-capacity checks for immediate booking feedback.
 
-### Q2.2 Synonym source and governance are unspecified.
-- Prompt text: example "garbanzo" -> "chickpea"
-- Ambiguity: No requirement for external dictionary vs local curated map.
-- Interpretation used: Local synonym table/dictionary is acceptable for offline-first behavior.
+## Repeated no-show threshold/window
+Question: Prompt says repeated no-shows trigger blacklisting but does not define threshold count or time window.
+My Understanding: A clear, documented policy (N no-shows within X days) is required.
+Solution: Defined and applied a deterministic no-show threshold/window policy in implementation.
 
-### Q2.3 Ranking formulas are unspecified.
-- Prompt text: ranked by popular, time-saving, budget, low-calorie
-- Ambiguity: Exact scoring math is not provided.
-- Interpretation used: Mode-specific deterministic ordering is acceptable (for example sort by relevant fields).
+## No-show timing baseline
+Question: Prompt defines no-show at 15 minutes after slot start, but timezone baseline is not explicit.
+My Understanding: Rule should be evaluated as slot_start + 15 minutes in local business context.
+Solution: Applied deterministic timing logic based on slot start plus grace period.
 
-## 3. Booking and Operations
+## WeChat-compatible emulator protocol scope
+Question: Prompt requires a local WeChat Pay-compatible emulator but does not define complete protocol fields/states.
+My Understanding: A deterministic local contract is acceptable if signature verification and idempotency are enforced.
+Solution: Implemented local gateway order/callback flow with HMAC verification and idempotency keyed by transaction reference.
 
-### Q3.1 "Immediate UI feedback" transport is unspecified.
-- Prompt text: immediate UI feedback on remaining capacity
-- Ambiguity: No requirement for WebSocket/SSE vs request-response polling.
-- Interpretation used: Synchronous API capacity checks are acceptable if user gets near-real-time slot availability.
+## Reconciliation missed-order criteria
+Question: Prompt requires flagging missed orders and repair support, but matching rules are not fully specified.
+My Understanding: Compare gateway-paid records and captured payments using stable business identifiers.
+Solution: Implemented mismatch detection based on stable order/payment linkage and surfaced repair flow.
 
-### Q3.2 "Repeated no-shows" threshold/window unspecified.
-- Prompt text: repeated no-shows drive automated blacklisting
-- Ambiguity: Count threshold and time window are not defined.
-- Interpretation used: Define an explicit, documented policy (for example N no-shows within X days) and apply consistently.
+## Re-authentication UX flow for critical finance actions
+Question: Prompt requires re-authentication but does not specify inline password vs secondary token.
+My Understanding: A short-lived one-time reauth token is a valid and auditable approach.
+Solution: Implemented critical-action reauth using short-lived one-time token flow.
 
-### Q3.3 No-show timing baseline detail.
-- Prompt text: no-show if not checked in within 15 minutes of slot start
-- Ambiguity: Does grace period use exact slot start in store local time only?
-- Interpretation used: Use slot_start + 15 minutes in local business timezone as deterministic rule.
+## Service radius unit ambiguity
+Question: Prompt example uses "8-mile dispatch radius" but does not globally fix storage unit.
+My Understanding: Choose one canonical unit and document conversions consistently.
+Solution: Standardized radius computation unit and kept API/UI behavior consistent with chosen unit model.
 
-## 4. Payment and Finance
+## Dispatch note payload format
+Question: Prompt requires printable dispatch note but does not define exact template fields.
+My Understanding: Include essential booking/customer/pickup fields in a stable printable structure.
+Solution: Implemented a deterministic printable dispatch-note payload containing core operational fields.
 
-### Q4.1 WeChat-compatible emulator scope is unspecified.
-- Prompt text: "locally hosted WeChat Pay-compatible gateway emulator"
-- Ambiguity: Exact protocol surface (fields, callback format, states) is not fully defined.
-- Interpretation used: Implement a local deterministic order/callback contract with signature verification and idempotency by transaction_ref.
+## Quiet-hours timezone interpretation
+Question: Prompt says quiet hours are 9:00 PM-8:00 AM without explicit timezone source.
+My Understanding: Quiet hours should follow store-local business time.
+Solution: Implemented quiet-hours policy using deterministic time-window enforcement strategy aligned to business context.
 
-### Q4.2 Reconciliation "missed orders" criteria are unspecified.
-- Prompt text: flags missed orders and supports abnormal state repair
-- Ambiguity: Matching keys and mismatch rules are not fully prescribed.
-- Interpretation used: Compare gateway-paid orders against captured payments using stable business identifiers and record mismatches.
+## Daily marketing cap reset boundary
+Question: Prompt requires max 2 marketing messages per day but does not define day boundary (UTC vs local midnight).
+My Understanding: Day boundary should follow local business day per store context.
+Solution: Implemented daily cap checks using deterministic day-boundary logic.
 
-### Q4.3 Re-authentication UX flow is unspecified.
-- Prompt text: fund-related actions require re-authentication
-- Ambiguity: Inline password check vs short-lived secondary token is not mandated.
-- Interpretation used: Use a short-lived one-time re-auth token for critical actions.
+## Magic-byte validation strictness
+Question: Prompt requires magic-byte checks but does not define full signature library or fallback policy.
+My Understanding: Enforce known signatures for allowed file types and reject mismatches.
+Solution: Implemented strict magic-byte checks for accepted MIME types with reject-on-mismatch behavior.
 
-## 5. Address, Distance, and Dispatch
+## Signed URL semantics
+Question: Prompt requires 5-minute signed URLs but does not state single-use vs reusable-within-TTL.
+My Understanding: Reuse within TTL is acceptable unless explicitly revoked.
+Solution: Implemented token validation with strict expiry window and authenticated access controls.
 
-### Q5.1 Unit ambiguity around service radius example.
-- Prompt text: example "8-mile dispatch radius"
-- Ambiguity: Example gives miles; implementation/storage unit not explicitly mandated globally.
-- Interpretation used: Choose one canonical unit (miles or km), document it clearly, and convert consistently in API/UI.
+## Sensitive data masking standard
+Question: Prompt requires masked UI/exports but does not define exact masking pattern.
+My Understanding: Deterministic partial masking should balance usability and data protection.
+Solution: Implemented consistent deterministic masking policy for sensitive fields.
 
-### Q5.2 Dispatch note format is unspecified.
-- Prompt text: route output is a printable dispatch note
-- Ambiguity: No strict template/fields are provided.
-- Interpretation used: Include booking/customer/pickup essentials in a stable printable payload.
+## Alert thresholds for anomalies
+Question: Prompt requires anomaly alerts but does not define all numerical thresholds.
+My Understanding: Thresholds should be configurable with documented defaults.
+Solution: Implemented alert generation with configurable threshold behavior.
 
-## 6. Notifications
+## CSV export schema
+Question: Prompt requires CSV export but does not prescribe exact columns or encoding.
+My Understanding: Provide stable header schema and UTF-8 output for compatibility.
+Solution: Implemented deterministic CSV export with fixed column headers and standard encoding.
 
-### Q6.1 Quiet-hours timezone is unspecified.
-- Prompt text: quiet hours from 9:00 PM-8:00 AM
-- Ambiguity: Store-local timezone vs server timezone is not explicit.
-- Interpretation used: Enforce quiet hours in store-local business timezone.
-
-### Q6.2 Marketing cap reset boundary unspecified.
-- Prompt text: max 2 marketing messages per day
-- Ambiguity: "day" boundary definition not explicit (UTC vs local midnight).
-- Interpretation used: Use local business-day boundary per store timezone.
-
-## 7. File Governance and Data Protection
-
-### Q7.1 Magic-byte validation strictness by type is unspecified.
-- Prompt text: magic-byte checks required
-- Ambiguity: Exact signature set and fallback behavior are not given.
-- Interpretation used: Enforce known signatures for allowed file types and reject non-matching payloads.
-
-### Q7.2 Signed URL semantics are unspecified.
-- Prompt text: short-lived signed URLs (5-minute expiry)
-- Ambiguity: Single-use vs multi-use within TTL is not defined.
-- Interpretation used: Token is valid until expiry unless explicitly revoked.
-
-### Q7.3 Masking standard for exports/UI is unspecified.
-- Prompt text: sensitive fields encrypted at rest and masked in UI and exports
-- Ambiguity: Exact masking pattern is not given.
-- Interpretation used: Apply deterministic partial masking that preserves usability while hiding sensitive portions.
-
-## 8. Reporting and Alerts
-
-### Q8.1 Alert thresholds are partially unspecified.
-- Prompt text: anomaly alerts for oversell, refund-rate spikes, stockout rate
-- Ambiguity: No exact numeric thresholds are fully provided.
-- Interpretation used: Define configurable thresholds and document defaults.
-
-### Q8.2 CSV schema is unspecified.
-- Prompt text: reports export to local CSV
-- Ambiguity: Required columns and encoding are not prescribed.
-- Interpretation used: Provide stable, documented CSV headers and UTF-8 encoding.
-
-## 9. Final Assumption Summary
-
-Implementation is considered aligned if it:
-- Preserves offline-first operation.
-- Enforces all explicit hard constraints from the prompt.
-- Uses deterministic documented choices where the prompt is intentionally open.
-- Keeps security controls strict (auth, RBAC, scope isolation, IDOR prevention, auditable critical actions).
+## Final assumption summary
+Question: Prompt includes explicit hard constraints and open-ended implementation spaces.
+My Understanding: Alignment means preserving offline-first behavior, enforcing explicit constraints, documenting deterministic choices, and keeping security controls strict.
+Solution: Applied the implementation policy with offline-first operation, explicit constraint enforcement, deterministic decisions for ambiguities, and strict auth/authz/scope/audit controls.
 
