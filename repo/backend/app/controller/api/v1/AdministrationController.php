@@ -38,7 +38,7 @@ final class AdministrationController extends BaseController
             $password = (string) $this->request->post('password', '');
             return JsonResponse::success($this->administrationService->issueCriticalReauthToken((int) ($authUser['id'] ?? 0), $password));
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 401);
+            return $this->respondException($e, 401);
         }
     }
 
@@ -120,9 +120,9 @@ final class AdministrationController extends BaseController
             $authUser = $this->request->middleware('auth_user', []);
             return JsonResponse::success($this->administrationService->createRole($this->request->post(), $authUser), 'Role created', 201);
         } catch (\app\exception\ForbiddenException $e) {
-            return JsonResponse::error($e->getMessage(), 403);
+            return $this->respondException($e, 403);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -132,9 +132,9 @@ final class AdministrationController extends BaseController
             $authUser = $this->request->middleware('auth_user', []);
             return JsonResponse::success($this->administrationService->grantRolePermissionResource($this->request->post(), $authUser), 'Granted', 201);
         } catch (\app\exception\ForbiddenException $e) {
-            return JsonResponse::error($e->getMessage(), 403);
+            return $this->respondException($e, 403);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -145,9 +145,9 @@ final class AdministrationController extends BaseController
             $scopes = $this->request->middleware('data_scopes', []);
             return JsonResponse::success($this->administrationService->assignRoleToUser($this->request->post(), $authUser, $scopes), 'Assigned', 201);
         } catch (\app\exception\ForbiddenException $e) {
-            return JsonResponse::error($e->getMessage(), 403);
+            return $this->respondException($e, 403);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 }

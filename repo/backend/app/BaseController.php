@@ -6,6 +6,7 @@ namespace app;
 use app\common\JsonResponse;
 use app\exception\ApiException;
 use think\App;
+use think\facade\Log;
 use think\Request;
 
 abstract class BaseController
@@ -30,6 +31,41 @@ abstract class BaseController
             return JsonResponse::error($e->getMessage(), $e->statusCode());
         }
 
-        return JsonResponse::error($e->getMessage(), $defaultStatus);
+        if ($this->isSafeException($e)) {
+            return JsonResponse::error($e->getMessage(), $defaultStatus);
+        }
+
+        Log::error('unhandled_exception', [
+            'class' => get_class($e),
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
+        return JsonResponse::error('An internal error occurred', 500);
+    }
+
+    private function isSafeException(\Throwable $e): bool
+    {
+        if ($e instanceof ApiException) {
+            return true;
+        }
+
+        if ($e instanceof \InvalidArgumentException) {
+            return true;
+        }
+
+        if ($e instanceof \RuntimeException) {
+            $msg = $e->getMessage();
+            $unsafePatterns = ['SQL', 'SQLSTATE', 'PDO', 'mysql', 'table', 'column', 'syntax', 'Connection refused'];
+            foreach ($unsafePatterns as $pattern) {
+                if (stripos($msg, $pattern) !== false) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        return false;
     }
 }

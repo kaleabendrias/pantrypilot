@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_failed_login_at DATETIME NULL,
   locked_until DATETIME NULL,
   account_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  password_reset_required TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_users_locked_until (locked_until)
@@ -342,13 +343,10 @@ INSERT INTO stores (code, name) VALUES ('S001', 'Main Store') ON DUPLICATE KEY U
 INSERT INTO warehouses (code, name) VALUES ('W001', 'Main Warehouse') ON DUPLICATE KEY UPDATE name = VALUES(name);
 INSERT INTO departments (code, name) VALUES ('D001', 'General Department') ON DUPLICATE KEY UPDATE name = VALUES(name);
 
--- Default admin seed: password MUST be changed on first login.
--- The hash below corresponds to a temporary bootstrap password that must be rotated.
--- Set PANTRYPILOT_ADMIN_PASSWORD_HASH env var to override at deploy time.
-INSERT INTO users (username, password_hash, display_name, role, store_id, warehouse_id, department_id)
-VALUES ('admin', '$2y$10$coP6EPopPcPJgzllcZkj9uuCPeokmqbzz4Wse8bqktO0l8c4zQey.', 'System Admin', 'admin', 1, 1, 1)
+-- Bootstrap admin: password_reset_required=1 forces rotation on first login.
+INSERT INTO users (username, password_hash, display_name, role, store_id, warehouse_id, department_id, password_reset_required)
+VALUES ('admin', '$2y$10$coP6EPopPcPJgzllcZkj9uuCPeokmqbzz4Wse8bqktO0l8c4zQey.', 'System Admin', 'admin', 1, 1, 1, 1)
 ON DUPLICATE KEY UPDATE username = username;
--- WARNING: This is a bootstrap-only seed credential. Rotate immediately after first boot.
 
 INSERT INTO roles (code, name) VALUES
 ('admin', 'Administrator'),

@@ -25,7 +25,7 @@ final class IdentityController extends BaseController
             $result = $this->identityService->register($payload);
             return JsonResponse::success($result, 'User registered', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -45,7 +45,26 @@ final class IdentityController extends BaseController
             );
             return JsonResponse::success($result, 'Authenticated');
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 401);
+            return $this->respondException($e, 401);
+        }
+    }
+
+    public function rotateBootstrapPassword()
+    {
+        try {
+            $payload = $this->request->post();
+            if (!isset($payload['username'], $payload['current_password'], $payload['new_password'])) {
+                return JsonResponse::error('username, current_password, and new_password are required', 422);
+            }
+
+            $result = $this->identityService->rotateBootstrapPassword(
+                (string) $payload['username'],
+                (string) $payload['current_password'],
+                (string) $payload['new_password']
+            );
+            return JsonResponse::success($result, 'Password rotated successfully');
+        } catch (\Throwable $e) {
+            return $this->respondException($e, 422);
         }
     }
 }

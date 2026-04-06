@@ -47,17 +47,28 @@ final class BookingService
         }
 
         $zip4 = (string) ($payload['customer_zip4'] ?? '');
-        if ($zip4 !== '' && !preg_match('/^\d{5}-\d{4}$/', $zip4)) {
+        if ($zip4 === '') {
+            throw new ValidationException('customer_zip4 is required');
+        }
+        if (!preg_match('/^\d{5}-\d{4}$/', $zip4)) {
             throw new ValidationException('ZIP+4 must be in format 12345-6789');
         }
 
         $regionCode = (string) ($payload['customer_region_code'] ?? '');
-        if ($regionCode !== '' && !$this->bookingRepository->regionExists($regionCode)) {
+        if ($regionCode === '') {
+            throw new ValidationException('customer_region_code is required');
+        }
+        if (!$this->bookingRepository->regionExists($regionCode)) {
             throw new ValidationException('Invalid admin region');
         }
 
-        if ($zip4 !== '' && $regionCode !== '' && !$this->bookingRepository->zip4InRegion($zip4, $regionCode)) {
+        if (!$this->bookingRepository->zip4InRegion($zip4, $regionCode)) {
             throw new ValidationException('ZIP+4 does not match admin region');
+        }
+
+        if (!isset($payload['customer_latitude']) || !is_numeric($payload['customer_latitude'])
+            || !isset($payload['customer_longitude']) || !is_numeric($payload['customer_longitude'])) {
+            throw new ValidationException('customer_latitude and customer_longitude are required');
         }
 
         $slotStart = (string) ($payload['slot_start'] ?? $payload['pickup_at']);
@@ -75,8 +86,8 @@ final class BookingService
             throw new ValidationException('Quantity cannot exceed 100');
         }
 
-        if (!empty($payload['customer_latitude']) && !empty($payload['customer_longitude'])
-            && !empty($point['latitude']) && !empty($point['longitude'])) {
+        if (isset($point['latitude']) && is_numeric($point['latitude'])
+            && isset($point['longitude']) && is_numeric($point['longitude'])) {
             $distance = $this->haversine(
                 (float) $payload['customer_latitude'],
                 (float) $payload['customer_longitude'],

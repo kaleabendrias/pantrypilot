@@ -2,7 +2,8 @@
 declare(strict_types=1);
 
 $results = ['passed' => 0, 'failed' => 0];
-$GATEWAY_HMAC_SECRET = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
+$_hmacRaw = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
+$GATEWAY_HMAC_SECRET = (is_string($_hmacRaw) && trim($_hmacRaw) !== '') ? trim($_hmacRaw) : 'insecure-default-hmac-secret-replace-in-production';
 
 function tassert(bool $condition, string $message): void
 {
@@ -1654,7 +1655,7 @@ runCase('Check-in rejects bookings with invalid state', function () use (&$admin
     tassert($checkin['status'] === 422, 'check-in of no_show booking must be rejected');
 });
 
-runCase('Callback-created payments inherit booking scope fields', function () use (&$adminToken): void {
+runCase('Callback-created payments inherit booking scope fields', function () use (&$adminToken, &$GATEWAY_HMAC_SECRET): void {
     $pdo = pdo();
     $code = 'BKG-CBSCOPE-' . strtoupper(bin2hex(random_bytes(3)));
     $slot = date('Y-m-d H:i:s', strtotime('+3 day 12:00'));
@@ -1673,8 +1674,7 @@ runCase('Callback-created payments inherit booking scope fields', function () us
     $txRef = 'TX-SCOPE-' . strtoupper(bin2hex(random_bytes(4)));
     $callbackPayload = ['order_ref' => $orderRef, 'transaction_ref' => $txRef, 'status' => 'SUCCESS'];
     ksort($callbackPayload);
-    $hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
-    $sig = hash_hmac('sha256', json_encode($callbackPayload, JSON_UNESCAPED_UNICODE), $hmacSecret);
+    $sig = hash_hmac('sha256', json_encode($callbackPayload, JSON_UNESCAPED_UNICODE), $GATEWAY_HMAC_SECRET);
 
     $cb = apiWithHeaders('POST', '/api/v1/payments/gateway/callback', $callbackPayload, ['X-Signature' => $sig], null);
     assertJsonContract($cb, 'gateway callback scope propagation');

@@ -22,15 +22,21 @@ final class AuthorizationMiddleware
             $routeKey = 'GET:/';
         }
 
-        $rules = Config::get('acl.permissions', []);
-        $matchedKey = $this->matchRoute($routeKey, array_keys($rules));
-        if ($matchedKey === null) {
+        $publicRoutes = Config::get('acl.public_routes', []);
+        if (in_array($routeKey, $publicRoutes, true)) {
             return $next($request);
         }
+
+        $rules = Config::get('acl.permissions', []);
+        $matchedKey = $this->matchRoute($routeKey, array_keys($rules));
 
         $authUser = $request->middleware('auth_user');
         if (!$authUser) {
             return JsonResponse::error('Unauthorized', 401);
+        }
+
+        if ($matchedKey === null) {
+            return JsonResponse::error('Forbidden', 403);
         }
 
         $required = $rules[$matchedKey];

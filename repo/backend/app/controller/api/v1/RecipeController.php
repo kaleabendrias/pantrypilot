@@ -30,7 +30,7 @@ final class RecipeController extends BaseController
             $filters['_auth_user'] = $this->request->middleware('auth_user', []);
             return JsonResponse::success(['items' => $this->recipeService->search($filters)]);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -44,7 +44,7 @@ final class RecipeController extends BaseController
             $payload['department_id'] = $authUser['department_id'] ?? null;
             return JsonResponse::success($this->recipeService->create($payload), 'Recipe created', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 

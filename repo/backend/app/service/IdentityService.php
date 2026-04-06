@@ -83,6 +83,10 @@ final class IdentityService
 
         $this->identityRepository->clearFailedLogins((int) $user['id']);
 
+        if ((int) ($user['password_reset_required'] ?? 0) === 1) {
+            throw new \RuntimeException('Password reset required. POST to /api/v1/identity/rotate-password with username, current_password, and new_password.');
+        }
+
         $token = $this->authTokenService->issueToken();
         $this->authSessionRepository->create(
             (int) $user['id'],
@@ -108,6 +112,35 @@ final class IdentityService
                 'permissions' => $grants,
             ],
         ];
+    }
+
+    public function rotateBootstrapPassword(string $username, string $currentPassword, string $newPassword): array
+    {
+        $user = $this->identityRepository->findByUsername($username);
+        if (!$user) {
+            throw new \RuntimeException('Invalid credentials');
+        }
+
+        if ((int) ($user['password_reset_required'] ?? 0) !== 1) {
+            throw new \RuntimeException('Password rotation is only available for accounts requiring a reset');
+        }
+
+        if (!password_verify($currentPassword, $user['password_hash'])) {
+            throw new \RuntimeException('Invalid credentials');
+        }
+
+        $this->passwordPolicy->assertValid($newPassword);
+
+        if ($currentPassword === $newPassword) {
+            throw new \InvalidArgumentException('New password must be different from the current password');
+        }
+
+        $this->identityRepository->updatePasswordHash((int) $user['id'], password_hash($newPassword, PASSWORD_BCRYPT));
+        $this->identityRepository->clearPasswordResetRequired((int) $user['id']);
+
+        Log::info('identity.bootstrap_password_rotated', ['user_id' => (int) $user['id'], 'username' => $username]);
+
+        return ['user_id' => (int) $user['id'], 'password_rotated' => true];
     }
 
     public function userByToken(string $rawToken): ?array

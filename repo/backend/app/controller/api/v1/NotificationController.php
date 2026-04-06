@@ -63,7 +63,7 @@ final class NotificationController extends BaseController
             $auth = $this->request->middleware('auth_user', []);
             return JsonResponse::success($this->notificationService->markReadForUser($id, (int) ($auth['id'] ?? 0)));
         } catch (\RuntimeException $e) {
-            return JsonResponse::error($e->getMessage(), 403);
+            return $this->respondException($e, 403);
         }
     }
 
@@ -73,7 +73,7 @@ final class NotificationController extends BaseController
             $auth = $this->request->middleware('auth_user', []);
             return JsonResponse::success($this->notificationService->markClickForUser($id, (int) ($auth['id'] ?? 0)));
         } catch (\RuntimeException $e) {
-            return JsonResponse::error($e->getMessage(), 403);
+            return $this->respondException($e, 403);
         }
     }
 

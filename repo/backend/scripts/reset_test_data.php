@@ -186,6 +186,7 @@ $ensureColumn($pdo, 'users', 'failed_login_attempts', 'INT UNSIGNED NOT NULL DEF
 $ensureColumn($pdo, 'users', 'last_failed_login_at', 'DATETIME NULL');
 $ensureColumn($pdo, 'users', 'locked_until', 'DATETIME NULL');
 $ensureColumn($pdo, 'users', 'account_enabled', 'TINYINT(1) NOT NULL DEFAULT 1');
+$ensureColumn($pdo, 'users', 'password_reset_required', 'TINYINT(1) NOT NULL DEFAULT 0');
 $ensureColumn($pdo, 'users', 'phone_enc', 'TEXT NULL');
 $ensureColumn($pdo, 'users', 'address_enc', 'TEXT NULL');
 
@@ -278,10 +279,10 @@ $adminHash = password_hash('admin12345', PASSWORD_BCRYPT);
 $scopedHash = password_hash('scope123456', PASSWORD_BCRYPT);
 $lockHash = password_hash('lock123456', PASSWORD_BCRYPT);
 
-$stmt = $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
-$stmt->execute(['admin', $adminHash, 'System Admin', 'admin', 1, 1, 1, 0, $now, $now]);
-$stmt->execute(['scoped_user', $scopedHash, 'Scoped User', 'staff', 1, 1, 1, 0, $now, $now]);
-$stmt->execute(['lock_user', $lockHash, 'Lock User', 'staff', 1, 1, 1, 0, $now, $now]);
+$stmt = $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,password_reset_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+$stmt->execute(['admin', $adminHash, 'System Admin', 'admin', 1, 1, 1, 0, 0, $now, $now]);
+$stmt->execute(['scoped_user', $scopedHash, 'Scoped User', 'staff', 1, 1, 1, 0, 0, $now, $now]);
+$stmt->execute(['lock_user', $lockHash, 'Lock User', 'staff', 1, 1, 1, 0, 0, $now, $now]);
 
 $roles = [['admin','Administrator'],['ops_staff','Operations Staff'],['manager','Operations Manager'],['finance','Finance Admin'],['customer','Customer']];
 $stmtRole = $pdo->prepare('INSERT INTO roles(code,name,created_at) VALUES(?,?,?)');

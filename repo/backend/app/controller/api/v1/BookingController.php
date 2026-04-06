@@ -94,7 +94,7 @@ final class BookingController extends BaseController
             }
             return JsonResponse::success($this->bookingService->recipeDetail($recipeId));
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 404);
+            return $this->respondException($e, 404);
         }
     }
 
@@ -145,7 +145,7 @@ final class BookingController extends BaseController
         try {
             return JsonResponse::success(['checked_in' => $this->bookingService->checkIn($bookingId, $staffId)]);
         } catch (\RuntimeException $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -169,7 +169,7 @@ final class BookingController extends BaseController
             }
             return JsonResponse::success($this->bookingService->printableDispatchNote($bookingId));
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 404);
+            return $this->respondException($e, 404);
         }
     }
 }

@@ -181,17 +181,26 @@ Use this checklist after `docker compose up` and `./run_tests.sh`.
 
 ## Required Environment Variables
 
-The application **requires** the following environment variables to start. No hardcoded secrets are shipped in the repository.
+All secrets and database credentials are supplied exclusively through a `.env` file (not committed to the repository). The backend refuses to start if any required variable is missing.
 
-| Variable | Description | Example |
-|---|---|---|
-| `PANTRYPILOT_GATEWAY_HMAC_SECRET` | HMAC-SHA256 secret for payment gateway callback signature verification | A random 64+ character string |
-| `PANTRYPILOT_CRYPTO_KEY` | AES-256-CBC encryption key for sensitive data at rest (must be exactly 32 bytes) | A random 32-byte string |
-| `PANTRYPILOT_CRYPTO_IV` | Legacy decryption IV (16+ chars). New encryption uses random IVs prepended to ciphertext. | A random 16+ character string |
+Copy `.env.example` to `.env` and fill in all values before starting:
 
-For local development, `docker-compose.yml` provides placeholder values. **You must replace them before any non-local deployment.** The backend will refuse to start if these variables are unset.
+```bash
+cp .env.example .env
+# Edit .env with real credentials
+```
 
-The seeded admin account in the bootstrap SQL uses a temporary password that **must be rotated on first login**.
+| Variable | Description |
+|---|---|
+| `DB_NAME` | MySQL database name |
+| `DB_USER` | MySQL username |
+| `DB_PASS` | MySQL password |
+| `MYSQL_ROOT_PASSWORD` | MySQL root password |
+| `PANTRYPILOT_GATEWAY_HMAC_SECRET` | HMAC-SHA256 secret for payment gateway callback verification |
+| `PANTRYPILOT_CRYPTO_KEY` | AES-256-CBC encryption key (16+ chars, hashed to 32 bytes internally) |
+| `PANTRYPILOT_CRYPTO_IV` | Legacy decryption IV (16+ chars; new encryption uses random IVs) |
+
+The bootstrap admin account has `password_reset_required=1`. The first login will be rejected until an administrator resets the password through the admin API, after which the flag is cleared.
 
 ## Security Regression Commands (Auditor)
 

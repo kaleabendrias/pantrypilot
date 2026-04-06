@@ -84,6 +84,14 @@ final class IdentityRepository
         ]) > 0;
     }
 
+    public function clearPasswordResetRequired(int $userId): void
+    {
+        Db::name('users')->where('id', $userId)->update([
+            'password_reset_required' => 0,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+    }
+
     public function replaceDataScopes(int $userId, array $scopeMap): void
     {
         Db::name('user_data_scopes')->where('user_id', $userId)->delete();

@@ -59,13 +59,10 @@ final class FileController extends BaseController
                     return JsonResponse::error('Referenced payment not found', 404);
                 }
                 if (!\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
-                    $scopeFields = ['store_id', 'warehouse_id', 'department_id'];
-                    foreach ($scopeFields as $field) {
-                        $paymentVal = (string) ($payment[$field] ?? '');
-                        $userVal = (string) ($authUser[$field] ?? '');
-                        if ($paymentVal !== '' && $userVal !== '' && $paymentVal !== $userVal) {
-                            return JsonResponse::error('Forbidden', 403);
-                        }
+                    $paymentScopeQuery = \think\facade\Db::name('payments')->alias('p')->where('p.id', $ownerId);
+                    \app\service\ScopeHelper::applyStandardScopes($paymentScopeQuery, 'p', $scopes, $authUser);
+                    if ($paymentScopeQuery->count() === 0) {
+                        return JsonResponse::error('Forbidden', 403);
                     }
                 }
             }
@@ -77,7 +74,7 @@ final class FileController extends BaseController
 
             return JsonResponse::success($this->fileService->uploadBase64($payload), 'File stored', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 

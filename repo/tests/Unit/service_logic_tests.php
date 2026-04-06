@@ -4,9 +4,10 @@ declare(strict_types=1);
 require __DIR__ . '/bootstrap.php';
 
 if (!class_exists('think\\facade\\Config', false)) {
-    $__hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'test_hmac_secret_for_unit_tests';
-    $__cryptoKey = getenv('PANTRYPILOT_CRYPTO_KEY') ?: 'test_crypto_key_exactly_32bytes!';
-    $__cryptoIv = getenv('PANTRYPILOT_CRYPTO_IV') ?: '1234567890abcdef';
+    $__envGet = function(string $k, string $fb): string { $v = getenv($k); return (is_string($v) && trim($v) !== '') ? trim($v) : $fb; };
+    $__hmacSecret = $__envGet('PANTRYPILOT_GATEWAY_HMAC_SECRET', 'insecure-default-hmac-secret-replace-in-production');
+    $__cryptoKey = $__envGet('PANTRYPILOT_CRYPTO_KEY', 'insecure-default-key-32b!!!!');
+    $__cryptoIv = $__envGet('PANTRYPILOT_CRYPTO_IV', 'insecure-iv-16b!');
     eval(<<<PHP
 namespace think\\facade;
 final class Config {
@@ -76,6 +77,7 @@ final class IdentityRepository {
         return $id;
     }
     public function assignRoleByCode(int $userId, string $roleCode): void {}
+    public function clearPasswordResetRequired(int $userId): void {}
     public function incrementFailedLogin(int $id, int $attempts, ?string $lockedUntil): void {
         foreach ($this->users as $k => $u) {
             if ((int) $u['id'] === $id) {
@@ -346,6 +348,7 @@ runTest('Booking service enforces offline booking constraints and contention', f
         'recipe_id' => 1, 'user_id' => 1, 'pickup_point_id' => 1, 'pickup_at' => $future,
         'slot_start' => $future, 'slot_end' => date('Y-m-d H:i:s', strtotime($future) + 1800),
         'customer_zip4' => 'bad-zip', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
     ]), 'invalid ZIP+4 should fail');
 
     $repo->zipRegionValid = false;
@@ -353,8 +356,14 @@ runTest('Booking service enforces offline booking constraints and contention', f
         'recipe_id' => 1, 'user_id' => 1, 'pickup_point_id' => 1, 'pickup_at' => $future,
         'slot_start' => $future, 'slot_end' => date('Y-m-d H:i:s', strtotime($future) + 1800),
         'customer_zip4' => '12345-6789', 'customer_region_code' => 'REG-001',
+        'customer_latitude' => 40.7128, 'customer_longitude' => -74.0060,
     ]), 'ZIP+4 region mismatch should fail');
     $repo->zipRegionValid = true;
+
+    assertThrows(fn () => $svc->create([
+        'recipe_id' => 1, 'user_id' => 1, 'pickup_point_id' => 1, 'pickup_at' => $future,
+        'slot_start' => $future, 'slot_end' => date('Y-m-d H:i:s', strtotime($future) + 1800),
+    ]), 'missing address fields should fail');
 
     $payload = [
         'recipe_id' => 1, 'user_id' => 1, 'pickup_point_id' => 1, 'pickup_at' => $future,
@@ -379,7 +388,8 @@ runTest('Payment service verifies callback signature and idempotency', function 
     $order = $svc->createGatewayOrder(['booking_id' => 7, 'amount' => 9.99]);
     $payload = ['amount' => 9.99, 'order_ref' => $order['order_ref'], 'status' => 'SUCCESS', 'transaction_ref' => 'TX-100'];
     ksort($payload);
-    $hmacSecret = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET') ?: 'change_me_gateway_hmac_secret_64chars_min';
+    $_hv = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
+    $hmacSecret = (is_string($_hv) && trim($_hv) !== '') ? trim($_hv) : 'insecure-default-hmac-secret-replace-in-production';
     $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $hmacSecret);
 
     $ok = $svc->processGatewayCallback($payload, $sig);

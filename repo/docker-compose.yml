@@ -24,15 +24,18 @@ services:
         condition: service_healthy
     ports:
       - "8000:80"
+    env_file:
+      - path: .env
+        required: false
     environment:
       DB_HOST: mysql
-      DB_NAME: pantrypilot
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-pantrypilot}
       DB_USER: ${DB_USER:-pantry}
       DB_PASS: ${DB_PASS:-pantrypass}
-      DB_PORT: "3306"
-      PANTRYPILOT_GATEWAY_HMAC_SECRET: ${PANTRYPILOT_GATEWAY_HMAC_SECRET:-change_me_gateway_hmac_secret_64chars_min}
-      PANTRYPILOT_CRYPTO_KEY: ${PANTRYPILOT_CRYPTO_KEY:-change_me_crypto_key_exactly32b!}
-      PANTRYPILOT_CRYPTO_IV: ${PANTRYPILOT_CRYPTO_IV:-change_me_16bytes}
+      PANTRYPILOT_GATEWAY_HMAC_SECRET: ${PANTRYPILOT_GATEWAY_HMAC_SECRET:-}
+      PANTRYPILOT_CRYPTO_KEY: ${PANTRYPILOT_CRYPTO_KEY:-}
+      PANTRYPILOT_CRYPTO_IV: ${PANTRYPILOT_CRYPTO_IV:-}
     volumes:
       - ./backend:/var/www/html
       - ./tests:/workspace/tests:ro
@@ -54,6 +57,9 @@ services:
     command: --default-authentication-plugin=mysql_native_password
     ports:
       - "3307:3306"
+    env_file:
+      - path: .env
+        required: false
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
       MYSQL_DATABASE: ${DB_NAME:-pantrypilot}
@@ -63,7 +69,7 @@ services:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpass"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$$MYSQL_ROOT_PASSWORD"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -195,6 +195,7 @@ final class AdministrationService
         }
         $this->passwordPolicy->assertValid($password);
         $this->identityRepository->updatePasswordHash($targetUserId, password_hash($password, PASSWORD_BCRYPT));
+        $this->identityRepository->clearPasswordResetRequired($targetUserId);
         $this->audit('reset_password', 'user', (string) $targetUserId, (int) ($actorUser['id'] ?? 0));
 
         return ['user_id' => $targetUserId, 'password_reset' => true];

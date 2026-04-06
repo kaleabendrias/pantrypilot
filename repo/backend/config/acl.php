@@ -4,6 +4,7 @@ return [
     'public_routes' => [
         'POST:api/v1/identity/login',
         'POST:api/v1/identity/register',
+        'POST:api/v1/identity/rotate-password',
         'GET:/',
         'POST:api/v1/payments/gateway/callback',
     ],

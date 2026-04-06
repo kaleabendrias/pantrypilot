@@ -39,6 +39,11 @@ final class PaymentService
         return $result;
     }
 
+    public function resolveBookingScope(int $bookingId): array
+    {
+        return $this->paymentRepository->bookingScopeById($bookingId) ?? ['store_id' => null, 'warehouse_id' => null, 'department_id' => null];
+    }
+
     public function create(array $payload): array
     {
         $this->paymentDomainPolicy->assertPositiveAmount((float) ($payload['amount'] ?? 0));

@@ -27,7 +27,7 @@ final class PaymentController extends BaseController
             $password = (string) $this->request->post('password', '');
             return JsonResponse::success($this->administrationService->issueCriticalReauthToken((int) ($authUser['id'] ?? 0), $password));
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 401);
+            return $this->respondException($e, 401);
         }
     }
 
@@ -61,9 +61,10 @@ final class PaymentController extends BaseController
             if (!$this->bookingService->canAccessBooking($bookingId, $scopes, $authUser)) {
                 return JsonResponse::error('Forbidden', 403);
             }
-            $payload['store_id'] = $authUser['store_id'] ?? null;
-            $payload['warehouse_id'] = $authUser['warehouse_id'] ?? null;
-            $payload['department_id'] = $authUser['department_id'] ?? null;
+            $bookingScope = $this->paymentService->resolveBookingScope($bookingId);
+            $payload['store_id'] = $bookingScope['store_id'] ?? null;
+            $payload['warehouse_id'] = $bookingScope['warehouse_id'] ?? null;
+            $payload['department_id'] = $bookingScope['department_id'] ?? null;
             return JsonResponse::success($this->paymentService->create($payload), 'Payment created', 201);
         } catch (\Throwable $e) {
             return $this->respondException($e, 422);
@@ -92,9 +93,14 @@ final class PaymentController extends BaseController
     public function reconcile()
     {
         try {
-            return JsonResponse::success($this->paymentService->reconcile($this->request->post()), 'Reconciliation started', 201);
+            $payload = $this->request->post();
+            $authUser = $this->request->middleware('auth_user', []);
+            $payload['store_id'] = $authUser['store_id'] ?? null;
+            $payload['warehouse_id'] = $authUser['warehouse_id'] ?? null;
+            $payload['department_id'] = $authUser['department_id'] ?? null;
+            return JsonResponse::success($this->paymentService->reconcile($payload), 'Reconciliation started', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -116,7 +122,7 @@ final class PaymentController extends BaseController
             }
             return JsonResponse::success($this->paymentService->createGatewayOrder($payload), 'Gateway order created', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -126,7 +132,7 @@ final class PaymentController extends BaseController
             $signature = (string) $this->request->header('X-Signature', '');
             return JsonResponse::success($this->paymentService->processGatewayCallback($this->request->post(), $signature), 'Callback processed');
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -145,7 +151,7 @@ final class PaymentController extends BaseController
             $authUser = $this->request->middleware('auth_user', []);
             return JsonResponse::success($this->paymentService->dailyReconciliation($date, $scopes, $authUser), 'Daily reconciliation completed');
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 

@@ -32,7 +32,7 @@ final class OperationsController extends BaseController
             $payload['department_id'] = (string) ($authUser['department_id'] ?? '');
             return JsonResponse::success($this->operationsService->createCampaign($payload), 'Campaign created', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -58,7 +58,7 @@ final class OperationsController extends BaseController
                 'Homepage module updated'
             );
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
@@ -80,7 +80,7 @@ final class OperationsController extends BaseController
             $payload['department_id'] = (string) ($authUser['department_id'] ?? '');
             return JsonResponse::success($this->operationsService->saveMessageTemplate($payload), 'Template saved', 201);
         } catch (\Throwable $e) {
-            return JsonResponse::error($e->getMessage(), 422);
+            return $this->respondException($e, 422);
         }
     }
 
