@@ -1,9 +1,12 @@
 <?php
 declare(strict_types=1);
 
-$dsn = 'mysql:host=mysql;port=3306;dbname=pantrypilot;charset=utf8mb4';
-$user = 'pantry';
-$pass = 'pantrypass';
+$dbHost = getenv('DB_HOST') ?: 'mysql';
+$dbPort = getenv('DB_PORT') ?: '3306';
+$dbName = getenv('DB_NAME') ?: 'pantrypilot';
+$user = getenv('DB_USER') ?: 'pantry';
+$pass = getenv('DB_PASS') ?: 'pantrypass';
+$dsn = "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4";
 
 $pdo = null;
 for ($i = 0; $i < 30; $i++) {

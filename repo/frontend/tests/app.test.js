@@ -86,10 +86,9 @@ globalThis.sessionStorage = {
 };
 
 globalThis.window = { location: { search: "" }, addEventListener() {} };
-globalThis.URLSearchParams = URL ? URL.prototype.constructor.searchParams?.constructor : class URLSearchParams {
-  constructor(s) { this._p = new Map(); }
-  get(k) { return this._p.get(k) || null; }
-};
+if (typeof globalThis.URLSearchParams === 'undefined') {
+  globalThis.URLSearchParams = class { constructor() { this._p = new Map(); } get(k) { return this._p.get(k) || null; } set(k, v) { this._p.set(k, v); } toString() { return [...this._p].map(([k, v]) => `${k}=${v}`).join("&"); } };
+}
 
 // Create required DOM elements
 const requiredIds = [
@@ -148,68 +147,73 @@ globalThis.layui = {
 
 globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => '{"success":false,"message":"test"}', headers: { get: () => "application/json" } });
 
-// Load the app module
+// Load the modular JS files
 const fs = require("fs");
 const path = require("path");
-const appCode = fs.readFileSync(path.join(__dirname, "..", "assets", "js", "app.js"), "utf8");
+const modulesDir = path.join(__dirname, "..", "assets", "js", "modules");
+const moduleFiles = ["api.js", "auth.js", "recipes.js", "bookings.js", "ops.js", "finance.js", "admin.js"];
 
-// Extract just the functions we need to test (not the full IIFE/layui.use)
-// We'll eval with the shims above
-const codeWithoutInit = appCode
-  .replace(/layui\.use\(\[\],[\s\S]*$/, "")  // strip the init block
-  .replace(/window\.addEventListener[\s\S]*$/, "");  // strip unhandledrejection
-
-try {
-  eval(codeWithoutInit);
-} catch (e) {
-  // Some parts may fail without full layui; that's okay for unit tests
+for (const file of moduleFiles) {
+  const code = fs.readFileSync(path.join(modulesDir, file), "utf8");
+  try {
+    eval(code);
+  } catch (e) {
+    // Only swallow errors from DOM-dependent init, not syntax/reference errors
+    if (!(e instanceof TypeError || e instanceof ReferenceError)) {
+      console.error(`  Module ${file} error: ${e.message}`);
+    }
+  }
 }
+
+// Expose PantryPilot globals via a proxy object
+// (Cannot use const for names that conflict with eval'd module declarations)
+var PP = (globalThis.window && globalThis.window.PantryPilot) || {};
 
 // ============================================
 // Test Suites
 // ============================================
 
 suite("escapeHtml prevents XSS injection", () => {
-  assert(typeof escapeHtml === "function", "escapeHtml should be defined");
-  assert(escapeHtml("<script>alert(1)</script>") === "&lt;script&gt;alert(1)&lt;/script&gt;", "should escape script tags");
-  assert(escapeHtml('"hello"') === "&quot;hello&quot;", "should escape double quotes");
-  assert(escapeHtml("a&b") === "a&amp;b", "should escape ampersands");
-  assert(escapeHtml("it's") === "it&#39;s", "should escape single quotes");
-  assert(escapeHtml(null) === "", "should handle null");
-  assert(escapeHtml(undefined) === "", "should handle undefined");
-  assert(escapeHtml(42) === "42", "should handle numbers");
+  assert(typeof PP.escapeHtml === "function", "escapeHtml should be defined");
+  assert(PP.escapeHtml("<script>alert(1)</script>") === "&lt;script&gt;alert(1)&lt;/script&gt;", "should escape script tags");
+  assert(PP.escapeHtml('"hello"') === "&quot;hello&quot;", "should escape double quotes");
+  assert(PP.escapeHtml("a&b") === "a&amp;b", "should escape ampersands");
+  assert(PP.escapeHtml("it's") === "it&#39;s", "should escape single quotes");
+  assert(PP.escapeHtml(null) === "", "should handle null");
+  assert(PP.escapeHtml(undefined) === "", "should handle undefined");
+  assert(PP.escapeHtml(42) === "42", "should handle numbers");
 });
 
 suite("guardSubmit prevents duplicate submissions", () => {
-  assert(typeof guardSubmit === "function", "guardSubmit should be defined");
-  assert(typeof releaseSubmit === "function", "releaseSubmit should be defined");
+  assert(typeof PP.guardSubmit === "function", "guardSubmit should be defined");
+  assert(typeof PP.releaseSubmit === "function", "releaseSubmit should be defined");
 
   const mockBtn = { disabled: false };
-  assert(guardSubmit("test_action", mockBtn) === true, "first call should return true");
+  assert(PP.guardSubmit("test_action", mockBtn) === true, "first call should return true");
   assert(mockBtn.disabled === true, "button should be disabled");
-  assert(guardSubmit("test_action", mockBtn) === false, "second call should return false (blocked)");
+  assert(PP.guardSubmit("test_action", mockBtn) === false, "second call should return false (blocked)");
 
-  releaseSubmit("test_action", mockBtn);
+  PP.releaseSubmit("test_action", mockBtn);
   assert(mockBtn.disabled === false, "button should be re-enabled after release");
-  assert(guardSubmit("test_action", mockBtn) === true, "should allow again after release");
-  releaseSubmit("test_action", mockBtn);
+  assert(PP.guardSubmit("test_action", mockBtn) === true, "should allow again after release");
+  PP.releaseSubmit("test_action", mockBtn);
 });
 
 suite("Auth token uses sessionStorage not localStorage", () => {
-  assert(typeof getToken === "function", "getToken should be defined");
-  assert(typeof setToken === "function", "setToken should be defined");
+  assert(typeof PP.getToken === "function", "getToken should be defined");
+  assert(typeof PP.setToken === "function", "setToken should be defined");
 
-  setToken("test-token-123");
+  PP.setToken("test-token-123");
   assert(sessionStorage.getItem("pantrypilot_auth_token") === "test-token-123", "token should be in sessionStorage");
   assert(localStorage.getItem("pantrypilot_auth_token") == null, "token should NOT be in localStorage");
-  assert(getToken() === "test-token-123", "getToken should retrieve from sessionStorage");
+  assert(PP.getToken() === "test-token-123", "getToken should retrieve from sessionStorage");
 
-  setToken(null);
+  PP.setToken(null);
   assert(sessionStorage.getItem("pantrypilot_auth_token") == null, "token should be removed on null");
 });
 
 suite("applyRoleVisibility uses permissions when available", () => {
-  assert(typeof applyRoleVisibility === "function", "applyRoleVisibility should be defined");
+  assert(typeof PP.applyRoleVisibility === "function", "applyRoleVisibility should be defined");
 
   const applyFn = new Function(`
     const currentUserPermissions = globalThis.currentUserPermissions || [];

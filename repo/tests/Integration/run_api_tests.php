@@ -215,7 +215,12 @@ function pdo(): PDO
     if ($pdo instanceof PDO) {
         return $pdo;
     }
-    $pdo = new PDO('mysql:host=mysql;port=3306;dbname=pantrypilot;charset=utf8mb4', 'pantry', 'pantrypass', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $_dbHost = getenv('DB_HOST') ?: 'mysql';
+    $_dbPort = getenv('DB_PORT') ?: '3306';
+    $_dbName = getenv('DB_NAME') ?: 'pantrypilot';
+    $_dbUser = getenv('DB_USER') ?: 'pantry';
+    $_dbPass = getenv('DB_PASS') ?: 'pantrypass';
+    $pdo = new PDO("mysql:host={$_dbHost};port={$_dbPort};dbname={$_dbName};charset=utf8mb4", $_dbUser, $_dbPass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     return $pdo;
 }
 

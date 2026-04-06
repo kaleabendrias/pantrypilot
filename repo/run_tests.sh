@@ -36,7 +36,7 @@ require_running api
 require_running mysql
 
 step "Wait for DNS + DB readiness from api" \
-  docker compose exec -T api php /var/www/html/scripts/wait_for_mysql.php --host=mysql --port=3306 --db=pantrypilot --user=pantry --pass=pantrypass --timeout=120
+  docker compose exec -T api bash -c 'php /var/www/html/scripts/wait_for_mysql.php --host=${DB_HOST:-mysql} --port=${DB_PORT:-3306} --db=${DB_NAME:-pantrypilot} --user=${DB_USER:-pantry} --pass=${DB_PASS:-pantrypass} --timeout=120'
 
 step "Reset deterministic seed data" \
   docker compose exec -T api php /var/www/html/scripts/reset_test_data.php
