@@ -295,7 +295,7 @@ $perms = [['read','Read'],['write','Write'],['approve','Approve']];
 $stmtPerm = $pdo->prepare('INSERT INTO permissions(code,name,created_at) VALUES(?,?,?)');
 foreach ($perms as $p) $stmtPerm->execute([$p[0], $p[1], $now]);
 
-$resources = ['recipe','booking','booking_ops','operations','payment','notification','file','reporting','admin'];
+$resources = ['recipe','booking','booking_ops','operations','payment','notification','notification_self','file','reporting','admin'];
 $stmtRes = $pdo->prepare('INSERT INTO resources(code,name,created_at) VALUES(?,?,?)');
 foreach ($resources as $r) $stmtRes->execute([$r, ucfirst($r), $now]);
 
@@ -317,12 +317,14 @@ $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['recipe'], $
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['write'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['notification'], $now]);
+$stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['notification_self'], $now]);
+$stmtRpr->execute([$roleMap['ops_staff'], $permMap['write'], $resMap['notification_self'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['read'], $resMap['booking_ops'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['write'], $resMap['booking_ops'], $now]);
 $stmtRpr->execute([$roleMap['ops_staff'], $permMap['approve'], $resMap['booking_ops'], $now]);
 
 // Manager: read/write for operations, recipes, bookings, notifications, files, reporting
-foreach (['recipe','booking','operations','notification','file','reporting'] as $res) {
+foreach (['recipe','booking','operations','notification','notification_self','file','reporting'] as $res) {
     $stmtRpr->execute([$roleMap['manager'], $permMap['read'], $resMap[$res], $now]);
     $stmtRpr->execute([$roleMap['manager'], $permMap['write'], $resMap[$res], $now]);
 }
@@ -340,6 +342,8 @@ $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['recipe'], $n
 $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['notification'], $now]);
+$stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['notification_self'], $now]);
+$stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['notification_self'], $now]);
 
 $stmtScope = $pdo->prepare('INSERT INTO user_data_scopes(user_id,scope_type,scope_value,created_at) VALUES(?,?,?,?)');
 foreach (['store','warehouse','department'] as $scopeType) {

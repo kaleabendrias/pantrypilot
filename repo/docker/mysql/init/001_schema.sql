@@ -367,6 +367,7 @@ INSERT INTO resources (code, name) VALUES
 ('operations', 'Operations'),
 ('payment', 'Payments'),
 ('notification', 'Notifications'),
+('notification_self', 'Notification Self-Service'),
 ('file', 'Files'),
 ('reporting', 'Reporting'),
 ('admin', 'Administration')
@@ -394,6 +395,9 @@ WHERE r.code = 'customer' AND p.code = 'write' AND rs.code = 'booking';
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'notification';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'customer' AND p.code IN ('read','write') AND rs.code = 'notification_self';
 
 -- Operations Staff: read recipes, read/write bookings, read notifications
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
@@ -413,6 +417,9 @@ SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'ops_staff' AND p.code = 'read' AND rs.code = 'notification';
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
+WHERE r.code = 'ops_staff' AND p.code IN ('read','write') AND rs.code = 'notification_self';
+INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
+SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'ops_staff' AND p.code IN ('read','write','approve') AND rs.code = 'booking_ops';
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
@@ -424,7 +431,7 @@ WHERE r.code = 'ops_staff' AND p.code = 'write' AND rs.code = 'operations';
 -- Manager: read/write operations, recipes, bookings, notifications, files, reporting + approve bookings
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
-WHERE r.code = 'manager' AND p.code IN ('read','write') AND rs.code IN ('recipe','booking','operations','notification','file','reporting');
+WHERE r.code = 'manager' AND p.code IN ('read','write') AND rs.code IN ('recipe','booking','operations','notification','notification_self','file','reporting');
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'manager' AND p.code = 'approve' AND rs.code = 'booking';

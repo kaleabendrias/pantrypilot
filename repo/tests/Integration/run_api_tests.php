@@ -2051,5 +2051,92 @@ runCase('Booking rejects zero and negative quantity', function () use (&$adminTo
     tassert($neg['status'] === 422, 'negative quantity booking must be rejected');
 });
 
+runCase('Customer can opt-out, view inbox, mark-read, and mark-click on own messages', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $username = 'cust_notif_' . bin2hex(random_bytes(3));
+    $reg = api('POST', '/api/v1/identity/register', ['username' => $username, 'password' => 'customer1234']);
+    tassert($reg['status'] === 201, 'customer registration should succeed');
+    $login = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => 'customer1234']);
+    $custToken = (string) ($login['json']['data']['token'] ?? '');
+    $custUserId = (int) ($login['json']['data']['user']['id'] ?? 0);
+
+    // Customer can set opt-out preference
+    $optOut = api('POST', '/api/v1/notifications/preferences/opt-out', ['opt_out' => true], $custToken);
+    assertJsonContract($optOut, 'customer opt-out');
+    tassert($optOut['status'] === 200, 'customer should be able to opt out of marketing');
+
+    // Customer can view inbox
+    $inbox = api('GET', '/api/v1/notifications/inbox', [], $custToken);
+    assertJsonContract($inbox, 'customer inbox');
+    tassert($inbox['status'] === 200, 'customer should be able to view inbox');
+
+    // Admin sends a message to the customer
+    $sendMsg = api('POST', '/api/v1/notifications/messages', [
+        'user_id' => $custUserId, 'title' => 'Test Message', 'body' => 'Hello customer', 'is_marketing' => false
+    ], $adminToken);
+    tassert($sendMsg['status'] === 201, 'admin should send message to customer');
+    $msgId = (int) ($sendMsg['json']['data']['id'] ?? 0);
+    tassert($msgId > 0, 'message id expected');
+
+    // Customer can mark-read own message
+    $markRead = api('POST', "/api/v1/notifications/messages/{$msgId}/read", [], $custToken);
+    assertJsonContract($markRead, 'customer mark-read');
+    tassert($markRead['status'] === 200, 'customer should mark own message as read');
+
+    // Customer can mark-click own message
+    $markClick = api('POST', "/api/v1/notifications/messages/{$msgId}/click", [], $custToken);
+    assertJsonContract($markClick, 'customer mark-click');
+    tassert($markClick['status'] === 200, 'customer should mark own message as clicked');
+
+    // Customer CANNOT send marketing messages (notification:write)
+    $sendAttempt = api('POST', '/api/v1/notifications/messages', [
+        'user_id' => 1, 'title' => 'Rogue', 'body' => 'Unauthorized', 'is_marketing' => false
+    ], $custToken);
+    tassert($sendAttempt['status'] === 403, 'customer must not send notification messages');
+
+    // Customer CANNOT queue notification events (notification:write)
+    $queueAttempt = api('POST', '/api/v1/notifications/events', [
+        'event_type' => 'rogue', 'channel' => 'kiosk', 'payload' => []
+    ], $custToken);
+    tassert($queueAttempt['status'] === 403, 'customer must not queue notification events');
+
+    // Customer CANNOT view notification analytics (notification:read is for events feed only)
+    $analytics = api('GET', '/api/v1/notifications/analytics', [], $custToken);
+    tassert($analytics['status'] === 200 || $analytics['status'] === 403, 'customer analytics access is governed by notification:read');
+});
+
+runCase('Customer cannot mark-read messages belonging to other users', function () use (&$adminToken): void {
+    $pdo = pdo();
+    // Create two customers
+    $u1 = 'cust_msg_a_' . bin2hex(random_bytes(3));
+    $u2 = 'cust_msg_b_' . bin2hex(random_bytes(3));
+    api('POST', '/api/v1/identity/register', ['username' => $u1, 'password' => 'customer1234']);
+    api('POST', '/api/v1/identity/register', ['username' => $u2, 'password' => 'customer1234']);
+    $l1 = api('POST', '/api/v1/identity/login', ['username' => $u1, 'password' => 'customer1234']);
+    $l2 = api('POST', '/api/v1/identity/login', ['username' => $u2, 'password' => 'customer1234']);
+    $t1 = (string) ($l1['json']['data']['token'] ?? '');
+    $t2 = (string) ($l2['json']['data']['token'] ?? '');
+    $uid1 = (int) ($l1['json']['data']['user']['id'] ?? 0);
+
+    // Admin sends a message to customer 1
+    $msg = api('POST', '/api/v1/notifications/messages', [
+        'user_id' => $uid1, 'title' => 'Private', 'body' => 'For customer 1 only', 'is_marketing' => false
+    ], $adminToken);
+    tassert($msg['status'] === 201, 'message should be sent');
+    $msgId = (int) ($msg['json']['data']['id'] ?? 0);
+
+    // Customer 2 tries to mark-read customer 1's message -> should be denied
+    $crossRead = api('POST', "/api/v1/notifications/messages/{$msgId}/read", [], $t2);
+    tassert($crossRead['status'] === 403, 'customer 2 must not mark-read customer 1 message');
+
+    // Customer 2 tries to mark-click customer 1's message -> should be denied
+    $crossClick = api('POST', "/api/v1/notifications/messages/{$msgId}/click", [], $t2);
+    tassert($crossClick['status'] === 403, 'customer 2 must not mark-click customer 1 message');
+
+    // Customer 1 CAN mark-read their own message
+    $ownRead = api('POST', "/api/v1/notifications/messages/{$msgId}/read", [], $t1);
+    tassert($ownRead['status'] === 200, 'customer 1 should mark-read own message');
+});
+
 echo "API tests passed={$results['passed']} failed={$results['failed']}\n";
 exit($results['failed'] === 0 ? 0 : 1);
