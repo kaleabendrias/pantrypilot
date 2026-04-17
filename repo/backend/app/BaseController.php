@@ -55,6 +55,10 @@ abstract class BaseController
             return true;
         }
 
+        if ($e instanceof \DomainException) {
+            return true;
+        }
+
         if ($e instanceof \RuntimeException) {
             $msg = $e->getMessage();
             $unsafePatterns = ['SQL', 'SQLSTATE', 'PDO', 'mysql', 'table', 'column', 'syntax', 'Connection refused'];

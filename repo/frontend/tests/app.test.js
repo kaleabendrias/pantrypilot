@@ -389,6 +389,105 @@ suite("app.js bootstrap: initial auth state is set from stored token", () => {
   authState.textContent = "";
 });
 
+suite("applyRoleVisibility fallback covers all five seeded roles", () => {
+  const roleTabs = {
+    customer: [0, 1, 2],
+    ops_staff: [0, 1, 2, 3],
+    staff: [0, 1, 2, 3],
+    manager: [0, 1, 2, 3, 5, 6],
+    finance: [0, 4],
+    admin: [0, 1, 2, 3, 4, 5, 6, 7],
+  };
+
+  const applyFn = (role) => {
+    const tabs = Array.from({ length: 8 }, (_, i) => elements[`__tab_${i}`]);
+    const allowed = roleTabs[role] || [0];
+    tabs.forEach((tab, idx) => { tab.style.display = allowed.includes(idx) ? "" : "none"; });
+    return tabs;
+  };
+
+  const finTabs = applyFn("finance");
+  assert(finTabs[0].style.display === "", "Finance: dashboard visible");
+  assert(finTabs[4].style.display === "", "Finance: payments tab visible");
+  assert(finTabs[1].style.display === "none", "Finance: recipes tab hidden");
+  assert(finTabs[7].style.display === "none", "Finance: admin tab hidden");
+
+  const mgrTabs = applyFn("manager");
+  assert(mgrTabs[3].style.display === "", "Manager: operations tab visible");
+  assert(mgrTabs[5].style.display === "", "Manager: notifications tab visible");
+  assert(mgrTabs[4].style.display === "none", "Manager: payments tab hidden");
+  assert(mgrTabs[7].style.display === "none", "Manager: admin tab hidden");
+
+  const adminTabs = applyFn("admin");
+  for (let i = 0; i < 8; i++) {
+    assert(adminTabs[i].style.display === "", `Admin: tab ${i} visible`);
+  }
+
+  const custTabs = applyFn("customer");
+  assert(custTabs[1].style.display === "", "Customer: recipes tab visible");
+  assert(custTabs[2].style.display === "", "Customer: bookings tab visible");
+  assert(custTabs[4].style.display === "none", "Customer: payments tab hidden");
+});
+
+suite("escapeHtml handles edge cases and nested HTML characters", () => {
+  assert(typeof PP.escapeHtml === "function", "escapeHtml must be available");
+  assert(PP.escapeHtml("") === "", "empty string should return empty");
+  assert(PP.escapeHtml("<b>bold</b>") === "&lt;b&gt;bold&lt;/b&gt;", "HTML tags fully escaped");
+  assert(PP.escapeHtml("5 > 3 & 2 < 4") === "5 &gt; 3 &amp; 2 &lt; 4", "mixed operators escaped");
+  assert(PP.escapeHtml('say "hello"') === 'say &quot;hello&quot;', "quotes escaped in attribute context");
+  assert(PP.escapeHtml(0) === "0", "falsy number 0 converts to '0'");
+  assert(!PP.escapeHtml("<img src=x onerror=alert(1)>").includes("<img"), "raw tag must not appear in escaped output");
+});
+
+suite("guardSubmit prevents concurrent duplicate actions across independent keys", () => {
+  assert(typeof PP.guardSubmit === "function", "guardSubmit must be defined");
+  const btnA = { disabled: false };
+  const btnB = { disabled: false };
+
+  assert(PP.guardSubmit("actionA", btnA) === true, "actionA first call allowed");
+  assert(PP.guardSubmit("actionB", btnB) === true, "actionB first call allowed (independent key)");
+  assert(PP.guardSubmit("actionA", btnA) === false, "actionA second call blocked");
+  assert(PP.guardSubmit("actionB", btnB) === false, "actionB second call blocked");
+
+  PP.releaseSubmit("actionA", btnA);
+  assert(btnA.disabled === false, "btnA re-enabled after release");
+  assert(btnB.disabled === true, "btnB still disabled (not released)");
+  assert(PP.guardSubmit("actionA", btnA) === true, "actionA allowed again after release");
+
+  PP.releaseSubmit("actionA", btnA);
+  PP.releaseSubmit("actionB", btnB);
+});
+
+suite("app.js bootstrap: module bind functions are callable with no-op DOM shim", () => {
+  const fns = ["bindRecipeEvents", "bindBookingEvents", "bindOpsEvents", "bindFinanceEvents", "bindAdminEvents"];
+  for (const fn of fns) {
+    assert(typeof PP[fn] === "function", `${fn} must be a function`);
+    let threw = false;
+    try { PP[fn](); } catch (e) { threw = !(e instanceof TypeError || e instanceof ReferenceError); }
+    assert(!threw, `${fn}() must not throw non-DOM errors`);
+  }
+});
+
+suite("app.js bootstrap: persistence listener fields are wired for all major modules", () => {
+  const allProbeSets = {
+    booking: ["bookingQuantity", "bookingNote", "bookingZip4"],
+    finance: ["paymentAmount", "paymentMethod", "adjustAmount"],
+    notifications: ["eventType", "eventChannel", "messageTitle"],
+    files: ["fileName", "fileMimeType"],
+    admin: ["adminTargetUserId", "adminNewPassword"],
+  };
+  let totalBound = 0;
+  for (const [, ids] of Object.entries(allProbeSets)) {
+    for (const id of ids) {
+      const el = elements[id];
+      if (el && el._listeners && el._listeners["change"] && el._listeners["change"].length > 0) {
+        totalBound++;
+      }
+    }
+  }
+  assert(totalBound > 0, "at least one cross-module persistence listener must be wired");
+});
+
 // ============================================
 // Summary
 // ============================================

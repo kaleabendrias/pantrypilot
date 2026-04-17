@@ -252,6 +252,14 @@ $ensureColumn($pdo, 'audit_logs', 'prev_hash', 'CHAR(64) NULL');
 $ensureColumn($pdo, 'audit_logs', 'hash_current', 'CHAR(64) NULL');
 $ensureColumn($pdo, 'audit_logs', 'ip_address', 'VARCHAR(45) NULL');
 
+$ensureColumn($pdo, 'reconciliation', 'store_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'reconciliation', 'warehouse_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'reconciliation', 'department_id', 'VARCHAR(60) NULL');
+
+$ensureColumn($pdo, 'message_events', 'store_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'message_events', 'warehouse_id', 'VARCHAR(60) NULL');
+$ensureColumn($pdo, 'message_events', 'department_id', 'VARCHAR(60) NULL');
+
 $tables = [
     'critical_reauth_tokens', 'finance_adjustments', 'finance_reconciliation_items',
     'gateway_callbacks', 'gateway_orders', 'dispatch_notes', 'anomaly_alerts',
@@ -278,14 +286,20 @@ $pdo->exec("INSERT INTO stores(code,name,created_at) VALUES('S001','Main Store',
 $pdo->exec("INSERT INTO warehouses(code,name,created_at) VALUES('W001','Main Warehouse','{$now}')");
 $pdo->exec("INSERT INTO departments(code,name,created_at) VALUES('D001','General Department','{$now}')");
 
-$adminHash = password_hash('admin12345', PASSWORD_BCRYPT);
-$scopedHash = password_hash('scope123456', PASSWORD_BCRYPT);
-$lockHash = password_hash('lock123456', PASSWORD_BCRYPT);
+$adminHash    = password_hash('admin12345',   PASSWORD_BCRYPT);
+$scopedHash   = password_hash('scope123456',  PASSWORD_BCRYPT);
+$lockHash     = password_hash('lock123456',   PASSWORD_BCRYPT);
+$managerHash  = password_hash('manager12345', PASSWORD_BCRYPT);
+$financeHash  = password_hash('finance12345', PASSWORD_BCRYPT);
+$customerHash = password_hash('cust12345pp',  PASSWORD_BCRYPT);
 
 $stmt = $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,password_reset_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
-$stmt->execute(['admin', $adminHash, 'System Admin', 'admin', 1, 1, 1, 0, 0, $now, $now]);
-$stmt->execute(['scoped_user', $scopedHash, 'Scoped User', 'staff', 1, 1, 1, 0, 0, $now, $now]);
-$stmt->execute(['lock_user', $lockHash, 'Lock User', 'staff', 1, 1, 1, 0, 0, $now, $now]);
+$stmt->execute(['admin',         $adminHash,    'System Admin',   'admin',   1,    1,    1,    0, 0, $now, $now]);
+$stmt->execute(['scoped_user',   $scopedHash,   'Scoped User',    'staff',   1,    1,    1,    0, 0, $now, $now]);
+$stmt->execute(['lock_user',     $lockHash,     'Lock User',      'staff',   1,    1,    1,    0, 0, $now, $now]);
+$stmt->execute(['manager_user',  $managerHash,  'Manager User',   'manager', 1,    1,    1,    0, 0, $now, $now]);
+$stmt->execute(['finance_user',  $financeHash,  'Finance User',   'finance', 1,    1,    1,    0, 0, $now, $now]);
+$stmt->execute(['customer_user', $customerHash, 'Customer User',  'customer',null, null, null, 0, 0, $now, $now]);
 
 $roles = [['admin','Administrator'],['ops_staff','Operations Staff'],['manager','Operations Manager'],['finance','Finance Admin'],['customer','Customer']];
 $stmtRole = $pdo->prepare('INSERT INTO roles(code,name,created_at) VALUES(?,?,?)');
@@ -304,8 +318,11 @@ $permMap = $pdo->query('SELECT code,id FROM permissions')->fetchAll(PDO::FETCH_K
 $resMap = $pdo->query('SELECT code,id FROM resources')->fetchAll(PDO::FETCH_KEY_PAIR);
 $userMap = $pdo->query('SELECT username,id FROM users')->fetchAll(PDO::FETCH_KEY_PAIR);
 
-$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['admin'], $roleMap['admin'], $now]);
-$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['scoped_user'], $roleMap['ops_staff'], $now]);
+$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['admin'],         $roleMap['admin'],    $now]);
+$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['scoped_user'],   $roleMap['ops_staff'], $now]);
+$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['manager_user'],  $roleMap['manager'],   $now]);
+$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['finance_user'],  $roleMap['finance'],   $now]);
+$pdo->prepare('INSERT INTO user_roles(user_id,role_id,created_at) VALUES(?,?,?)')->execute([$userMap['customer_user'], $roleMap['customer'],  $now]);
 
 $stmtRpr = $pdo->prepare('INSERT INTO role_permission_resources(role_id,permission_id,resource_id,created_at) VALUES(?,?,?,?)');
 foreach ($permMap as $permCode => $permId) {
@@ -346,8 +363,10 @@ $stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['notificatio
 
 $stmtScope = $pdo->prepare('INSERT INTO user_data_scopes(user_id,scope_type,scope_value,created_at) VALUES(?,?,?,?)');
 foreach (['store','warehouse','department'] as $scopeType) {
-    $stmtScope->execute([$userMap['admin'], $scopeType, '1', $now]);
-    $stmtScope->execute([$userMap['scoped_user'], $scopeType, '1', $now]);
+    $stmtScope->execute([$userMap['admin'],        $scopeType, '1', $now]);
+    $stmtScope->execute([$userMap['scoped_user'],  $scopeType, '1', $now]);
+    $stmtScope->execute([$userMap['manager_user'], $scopeType, '1', $now]);
+    $stmtScope->execute([$userMap['finance_user'], $scopeType, '1', $now]);
 }
 
 $pdo->exec("INSERT INTO address_regions(region_code,region_name,created_at) VALUES

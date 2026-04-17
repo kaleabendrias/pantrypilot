@@ -232,7 +232,7 @@ final class PaymentService
     public function repairReconciliationIssue(int $issueId, string $note, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
-            throw new ValidationException('Critical operation requires valid re-auth token');
+            throw new ForbiddenException('Critical operation requires valid re-auth token');
         }
         if (!$this->paymentRepository->issueExists($issueId)) {
             throw new NotFoundException('Issue not found');
@@ -266,7 +266,7 @@ final class PaymentService
     public function refund(string $paymentRef, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
-            throw new ValidationException('Critical operation requires valid re-auth token');
+            throw new ForbiddenException('Critical operation requires valid re-auth token');
         }
 
         $payment = $this->paymentRepository->paymentByRef($paymentRef);
@@ -286,7 +286,7 @@ final class PaymentService
     public function adjust(string $paymentRef, float $amount, string $reason, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
-            throw new ValidationException('Critical operation requires valid re-auth token');
+            throw new ForbiddenException('Critical operation requires valid re-auth token');
         }
 
         $payment = $this->paymentRepository->paymentByRef($paymentRef);

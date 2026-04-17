@@ -1411,7 +1411,7 @@ runCase('Re-auth token one-time use across repair/refund/adjust', function () us
 
     $reuseFail = api('POST', '/api/v1/payments/refund', ['payment_ref' => $adminPaymentRef, 'reauth_token' => $tok1], $adminToken);
     assertJsonContract($reuseFail, 'reuse token should fail');
-    tassert($reuseFail['status'] === 422, 'reused reauth token should fail');
+    tassert($reuseFail['status'] === 403, 'reused reauth token should fail');
 
     $refundToken = api('POST', '/api/v1/admin/reauth', ['password' => 'admin12345'], $adminToken);
     $tok2 = (string) ($refundToken['json']['data']['reauth_token'] ?? '');
@@ -1437,7 +1437,7 @@ runCase('Re-auth token one-time use across repair/refund/adjust', function () us
 
     $reuseFail2 = api('POST', '/api/v1/payments/refund', ['payment_ref' => $adjustRef, 'reauth_token' => $tok3], $adminToken);
     assertJsonContract($reuseFail2, 'reused adjust token should fail');
-    tassert($reuseFail2['status'] === 422, 'reused token after adjust should fail');
+    tassert($reuseFail2['status'] === 403, 'reused token after adjust should fail');
 });
 
 runCase('CSV export returns decodable CSV payload', function () use (&$adminToken): void {
@@ -2428,6 +2428,393 @@ runCase('Scoped user cannot see null-scope notification events (cross-tenant iso
     $scopedItems = $scopedEvents['json']['data']['items'] ?? [];
     $scopedIds = array_map('intval', array_column($scopedItems, 'id'));
     tassert(!in_array($nullScopeEventId, $scopedIds, true), 'scoped user must not see null-scope (cross-tenant) event');
+});
+
+// ============================================================
+// COVERAGE EXPANSION: untested endpoints
+// ============================================================
+
+runCase('Identity rotate-password: correct credentials rotate; wrong password rejects; old password becomes invalid', function (): void {
+    $pdo = pdo();
+    $hash = password_hash('temp12345', PASSWORD_BCRYPT);
+    $pdo->exec("INSERT INTO users(username,password_hash,display_name,role,failed_login_attempts,password_reset_required,account_enabled,created_at,updated_at) VALUES('rotate_test','{$hash}','Rotate Test','staff',0,0,1,NOW(),NOW())");
+    $userId = (int) $pdo->lastInsertId();
+    $roleId = (int) ($pdo->query("SELECT id FROM roles WHERE code='ops_staff' LIMIT 1")->fetchColumn() ?: 0);
+    if ($userId > 0 && $roleId > 0) {
+        $pdo->prepare('INSERT IGNORE INTO user_roles(user_id,role_id,created_at) VALUES(?,?,NOW())')->execute([$userId, $roleId]);
+    }
+
+    $missing = api('POST', '/api/v1/identity/rotate-password', ['username' => 'rotate_test']);
+    assertJsonContract($missing, 'rotate-password missing fields');
+    tassert($missing['status'] === 422, 'missing fields should return 422');
+
+    $bad = api('POST', '/api/v1/identity/rotate-password', ['username' => 'rotate_test', 'current_password' => 'wrong12345', 'new_password' => 'newpass12345']);
+    assertJsonContract($bad, 'rotate-password wrong current password');
+    tassert($bad['status'] === 422, 'wrong current password should return 422');
+
+    $ok = api('POST', '/api/v1/identity/rotate-password', ['username' => 'rotate_test', 'current_password' => 'temp12345', 'new_password' => 'newpass12345']);
+    assertJsonContract($ok, 'rotate-password success');
+    tassert($ok['status'] === 200, 'correct rotate-password should return 200');
+    tassert(($ok['json']['data']['password_rotated'] ?? false) === true, 'password_rotated must be true');
+
+    $oldLogin = api('POST', '/api/v1/identity/login', ['username' => 'rotate_test', 'password' => 'temp12345']);
+    tassert($oldLogin['status'] === 401, 'old password must fail after rotation');
+
+    $newLogin = api('POST', '/api/v1/identity/login', ['username' => 'rotate_test', 'password' => 'newpass12345']);
+    tassert($newLogin['status'] === 200, 'new password must succeed after rotation');
+});
+
+runCase('Tags index returns list; create inserts new tag and reflects in subsequent list', function () use (&$adminToken): void {
+    $list = api('GET', '/api/v1/tags', [], $adminToken);
+    assertJsonContract($list, 'GET /api/v1/tags');
+    tassert($list['status'] === 200, 'tags list should return 200');
+    tassert(array_key_exists('items', $list['json']['data'] ?? []), 'tags list must include items key');
+    $before = count($list['json']['data']['items'] ?? []);
+
+    $newName = 'tag-cov-' . substr(md5((string) microtime(true)), 0, 8);
+    $create = api('POST', '/api/v1/tags', ['name' => $newName, 'color' => '#aabbcc'], $adminToken);
+    assertJsonContract($create, 'POST /api/v1/tags');
+    tassert($create['status'] === 201, 'tag create should return 201');
+    tassert(isset($create['json']['data']['id']), 'created tag must have an id');
+
+    $listAfter = api('GET', '/api/v1/tags', [], $adminToken);
+    tassert(count($listAfter['json']['data']['items'] ?? []) > $before, 'tag count must increase after create');
+});
+
+runCase('Recipe create with valid payload returns 201; zero prep_minutes is rejected', function () use (&$adminToken): void {
+    $code = 'RCP-COV-' . substr(md5((string) microtime(true)), 0, 6);
+    $r = api('POST', '/api/v1/recipes', [
+        'code'           => $code,
+        'name'           => 'Coverage Recipe',
+        'description'    => 'Created by integration coverage test',
+        'prep_minutes'   => 15,
+        'step_count'     => 4,
+        'servings'       => 2,
+        'difficulty'     => 'easy',
+        'calories'       => 350,
+        'estimated_cost' => 8.50,
+        'status'         => 'published',
+    ], $adminToken);
+    assertJsonContract($r, 'POST /api/v1/recipes');
+    tassert($r['status'] === 201, 'recipe create should return 201');
+    tassert(isset($r['json']['data']['id']), 'created recipe must have an id');
+
+    $bad = api('POST', '/api/v1/recipes', [
+        'code'         => 'RCP-BAD',
+        'name'         => 'Bad Recipe',
+        'prep_minutes' => 0,
+        'status'       => 'published',
+    ], $adminToken);
+    assertJsonContract($bad, 'recipe create zero prep_minutes');
+    tassert($bad['status'] === 422, 'zero prep_minutes must return 422');
+});
+
+runCase('Booking slot-capacity returns availability data for valid pickup point and window', function () use (&$adminToken): void {
+    $slotStart = date('Y-m-d H:00:00', strtotime('+1 day'));
+    $slotEnd   = date('Y-m-d H:30:00', strtotime('+1 day'));
+
+    $missing = api('GET', '/api/v1/bookings/slot-capacity', [], $adminToken);
+    assertJsonContract($missing, 'slot-capacity missing params');
+    tassert($missing['status'] === 422, 'missing params should return 422');
+
+    $r = api('GET', '/api/v1/bookings/slot-capacity?pickup_point_id=1&slot_start=' . urlencode($slotStart) . '&slot_end=' . urlencode($slotEnd), [], $adminToken);
+    assertJsonContract($r, 'GET /api/v1/bookings/slot-capacity');
+    tassert($r['status'] === 200, 'slot-capacity should return 200');
+    tassert(is_array($r['json']['data'] ?? null), 'slot-capacity must return data array');
+});
+
+runCase('Booking check-in validates booking_id; missing ID returns 422; non-existent returns 404', function () use (&$adminToken): void {
+    $noId = api('POST', '/api/v1/bookings/check-in', [], $adminToken);
+    assertJsonContract($noId, 'check-in missing booking_id');
+    tassert($noId['status'] === 422, 'missing booking_id should return 422');
+
+    $notFound = api('POST', '/api/v1/bookings/check-in', ['booking_id' => 999999], $adminToken);
+    assertJsonContract($notFound, 'check-in nonexistent booking');
+    tassert($notFound['status'] === 404, 'nonexistent booking should return 404');
+
+    $pdo = pdo();
+    $bookingId = (int) ($pdo->query("SELECT id FROM bookings WHERE booking_code='BKG-PENDING-NS' LIMIT 1")->fetchColumn() ?: 0);
+    if ($bookingId > 0) {
+        $r = api('POST', '/api/v1/bookings/check-in', ['booking_id' => $bookingId], $adminToken);
+        assertJsonContract($r, 'check-in existing booking');
+        tassert(in_array($r['status'], [200, 422], true), 'check-in should return 200 or 422 (policy may reject past booking)');
+    }
+});
+
+runCase('Payments index returns paginated list with items and total fields', function () use (&$adminToken, &$scopedToken): void {
+    $r = api('GET', '/api/v1/payments', [], $adminToken);
+    assertJsonContract($r, 'GET /api/v1/payments');
+    tassert($r['status'] === 200, 'payments index should return 200');
+    tassert(array_key_exists('items', $r['json']['data'] ?? []), 'payments index must include items key');
+
+    $paged = api('GET', '/api/v1/payments?page=1&per_page=5', [], $adminToken);
+    tassert($paged['status'] === 200, 'payments index pagination should return 200');
+
+    $denied = api('GET', '/api/v1/payments', [], $scopedToken);
+    tassert($denied['status'] === 403, 'ops_staff must be denied payments index');
+});
+
+runCase('Auto-cancel expired gateway orders returns cancelled count', function () use (&$adminToken): void {
+    $r = api('POST', '/api/v1/payments/gateway/auto-cancel', [], $adminToken);
+    assertJsonContract($r, 'POST /api/v1/payments/gateway/auto-cancel');
+    tassert($r['status'] === 200, 'auto-cancel should return 200');
+    tassert(isOk($r), 'auto-cancel must succeed');
+    tassert(array_key_exists('auto_cancelled', $r['json']['data'] ?? []), 'auto-cancel must return auto_cancelled key');
+});
+
+runCase('Repair reconciliation issue rejects invalid reauth; succeeds with valid reauth token', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $issueId = (int) ($pdo->query("SELECT id FROM finance_reconciliation_items WHERE repaired=0 LIMIT 1")->fetchColumn() ?: 0);
+    if ($issueId < 1) {
+        $pdo->exec("INSERT INTO finance_reconciliation_items(batch_ref,gateway_order_ref,issue_type,repaired,created_at) VALUES('BATCH-REPAIR-COV','GW-MISS-001','missing_payment',0,NOW())");
+        $issueId = (int) $pdo->lastInsertId();
+    }
+    tassert($issueId > 0, 'repair test requires a reconciliation issue row');
+
+    $bad = api('POST', '/api/v1/payments/reconcile/repair', ['issue_id' => $issueId, 'note' => 'test', 'reauth_token' => 'bad-token'], $adminToken);
+    assertJsonContract($bad, 'repair issue invalid reauth');
+    tassert($bad['status'] === 403, 'repair with invalid reauth must return 403');
+
+    $reauth = api('POST', '/api/v1/admin/reauth', ['password' => 'admin12345'], $adminToken);
+    $reauthToken = (string) ($reauth['json']['data']['reauth_token'] ?? '');
+    tassert($reauthToken !== '', 'reauth token required for repair');
+
+    $repair = api('POST', '/api/v1/payments/reconcile/repair', ['issue_id' => $issueId, 'note' => 'Resolved by coverage test', 'reauth_token' => $reauthToken], $adminToken);
+    assertJsonContract($repair, 'POST /api/v1/payments/reconcile/repair');
+    tassert($repair['status'] === 200, 'repair issue should return 200');
+    tassert(($repair['json']['data']['repaired'] ?? false) === true, 'repaired flag must be true');
+});
+
+runCase('Refund rejects invalid reauth; succeeds on captured payment with valid reauth', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $bookingId = (int) ($pdo->query("SELECT id FROM bookings LIMIT 1")->fetchColumn() ?: 1);
+
+    $pay = api('POST', '/api/v1/payments', ['booking_id' => $bookingId, 'amount' => 25.00, 'method' => 'cash', 'status' => 'captured'], $adminToken);
+    assertJsonContract($pay, 'create payment for refund');
+    tassert($pay['status'] === 201, 'payment for refund must be created');
+    $payRef = (string) ($pay['json']['data']['payment_ref'] ?? '');
+    tassert($payRef !== '', 'payment_ref required for refund test');
+
+    $badRefund = api('POST', '/api/v1/payments/refund', ['payment_ref' => $payRef, 'reauth_token' => 'bad'], $adminToken);
+    assertJsonContract($badRefund, 'refund invalid reauth');
+    tassert($badRefund['status'] === 403, 'refund with invalid reauth must return 403');
+
+    $reauth = api('POST', '/api/v1/admin/reauth', ['password' => 'admin12345'], $adminToken);
+    $reauthToken = (string) ($reauth['json']['data']['reauth_token'] ?? '');
+    tassert($reauthToken !== '', 'reauth token required for refund');
+
+    $refund = api('POST', '/api/v1/payments/refund', ['payment_ref' => $payRef, 'reauth_token' => $reauthToken], $adminToken);
+    assertJsonContract($refund, 'POST /api/v1/payments/refund');
+    tassert(in_array($refund['status'], [200, 422], true), 'refund should return 200 or 422');
+});
+
+runCase('Adjust records a financial adjustment with valid reauth and rejects without it', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $bookingId = (int) ($pdo->query("SELECT id FROM bookings LIMIT 1")->fetchColumn() ?: 1);
+
+    $pay = api('POST', '/api/v1/payments', ['booking_id' => $bookingId, 'amount' => 30.00, 'method' => 'cash', 'status' => 'captured'], $adminToken);
+    assertJsonContract($pay, 'create payment for adjust');
+    tassert($pay['status'] === 201, 'payment for adjust must be created');
+    $payRef = (string) ($pay['json']['data']['payment_ref'] ?? '');
+    tassert($payRef !== '', 'payment_ref required for adjust test');
+
+    $badAdjust = api('POST', '/api/v1/payments/adjust', ['payment_ref' => $payRef, 'amount' => 5.00, 'reason' => 'test', 'reauth_token' => 'bad'], $adminToken);
+    assertJsonContract($badAdjust, 'adjust invalid reauth');
+    tassert($badAdjust['status'] === 403, 'adjust with invalid reauth must return 403');
+
+    $reauth = api('POST', '/api/v1/admin/reauth', ['password' => 'admin12345'], $adminToken);
+    $reauthToken = (string) ($reauth['json']['data']['reauth_token'] ?? '');
+    tassert($reauthToken !== '', 'reauth token required for adjust');
+
+    $adjust = api('POST', '/api/v1/payments/adjust', ['payment_ref' => $payRef, 'amount' => 5.00, 'reason' => 'Coverage test adjustment', 'reauth_token' => $reauthToken], $adminToken);
+    assertJsonContract($adjust, 'POST /api/v1/payments/adjust');
+    tassert(in_array($adjust['status'], [200, 422], true), 'adjust should return 200 or 422');
+});
+
+runCase('Notification event create queues event and analytics returns structured metrics', function () use (&$adminToken, &$scopedToken): void {
+    $create = api('POST', '/api/v1/notifications/events', [
+        'event_type' => 'coverage_test',
+        'channel'    => 'kiosk',
+        'payload'    => ['test' => true],
+    ], $adminToken);
+    assertJsonContract($create, 'POST /api/v1/notifications/events');
+    tassert($create['status'] === 201, 'notification event create should return 201');
+    tassert(isset($create['json']['data']['id']), 'created event must have an id');
+
+    $analytics = api('GET', '/api/v1/notifications/analytics', [], $adminToken);
+    assertJsonContract($analytics, 'GET /api/v1/notifications/analytics');
+    tassert($analytics['status'] === 200, 'notification analytics should return 200');
+    tassert(isOk($analytics), 'notification analytics must succeed');
+});
+
+runCase('Notification sendMessage, inbox, markRead, markClick, and setOptOut full lifecycle', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $adminId = (int) ($pdo->query("SELECT id FROM users WHERE username='admin' LIMIT 1")->fetchColumn() ?: 1);
+
+    $send = api('POST', '/api/v1/notifications/messages', [
+        'user_id'      => $adminId,
+        'title'        => 'Coverage Test Message',
+        'body'         => 'Integration test notification body',
+        'is_marketing' => false,
+    ], $adminToken);
+    assertJsonContract($send, 'POST /api/v1/notifications/messages');
+    tassert($send['status'] === 201, 'sendMessage should return 201');
+    $msgId = (int) ($send['json']['data']['id'] ?? 0);
+    tassert($msgId > 0, 'sent message must have a positive id');
+
+    $inbox = api('GET', '/api/v1/notifications/inbox', [], $adminToken);
+    assertJsonContract($inbox, 'GET /api/v1/notifications/inbox');
+    tassert($inbox['status'] === 200, 'inbox should return 200');
+    tassert(array_key_exists('items', $inbox['json']['data'] ?? []), 'inbox must include items key');
+
+    $read = api('POST', '/api/v1/notifications/messages/' . $msgId . '/read', [], $adminToken);
+    assertJsonContract($read, 'POST notifications/messages/{id}/read');
+    tassert($read['status'] === 200, 'markRead should return 200');
+
+    $click = api('POST', '/api/v1/notifications/messages/' . $msgId . '/click', [], $adminToken);
+    assertJsonContract($click, 'POST notifications/messages/{id}/click');
+    tassert($click['status'] === 200, 'markClick should return 200');
+
+    $pdo->query("SELECT read_at, clicked_at FROM message_center WHERE id={$msgId}");
+    $row = $pdo->query("SELECT read_at, clicked_at FROM message_center WHERE id={$msgId}")->fetch(PDO::FETCH_ASSOC);
+    tassert(!empty($row['read_at']), 'read_at must be stamped after markRead');
+    tassert(!empty($row['clicked_at']), 'clicked_at must be stamped after markClick');
+
+    $optOut = api('POST', '/api/v1/notifications/preferences/opt-out', ['opt_out' => true], $adminToken);
+    assertJsonContract($optOut, 'POST notifications/preferences/opt-out (opt out)');
+    tassert($optOut['status'] === 200, 'setOptOut true should return 200');
+
+    $optIn = api('POST', '/api/v1/notifications/preferences/opt-out', ['opt_out' => false], $adminToken);
+    assertJsonContract($optIn, 'POST notifications/preferences/opt-out (opt in)');
+    tassert($optIn['status'] === 200, 'setOptOut false should return 200');
+});
+
+runCase('Files index returns list; cleanup removes retention-expired attachments', function () use (&$adminToken): void {
+    $list = api('GET', '/api/v1/files', [], $adminToken);
+    assertJsonContract($list, 'GET /api/v1/files');
+    tassert($list['status'] === 200, 'files index should return 200');
+    tassert(array_key_exists('items', $list['json']['data'] ?? []), 'files index must include items key');
+
+    $cleanup = api('POST', '/api/v1/files/cleanup', [], $adminToken);
+    assertJsonContract($cleanup, 'POST /api/v1/files/cleanup');
+    tassert($cleanup['status'] === 200, 'files cleanup should return 200');
+    tassert(array_key_exists('deleted_records', $cleanup['json']['data'] ?? []), 'cleanup must return deleted_records key');
+});
+
+runCase('Admin audit-logs returns paginated entries for admin and is denied for non-admin', function () use (&$adminToken, &$scopedToken): void {
+    $r = api('GET', '/api/v1/admin/audit-logs', [], $adminToken);
+    assertJsonContract($r, 'GET /api/v1/admin/audit-logs');
+    tassert($r['status'] === 200, 'audit logs should return 200 for admin');
+    tassert(array_key_exists('items', $r['json']['data'] ?? []), 'audit logs must include items key');
+    tassert(array_key_exists('pagination', $r['json']['data'] ?? []), 'audit logs must include pagination key');
+
+    $denied = api('GET', '/api/v1/admin/audit-logs', [], $scopedToken);
+    assertJsonContract($denied, 'audit logs non-admin denied');
+    tassert($denied['status'] === 403, 'audit logs must return 403 for non-admin');
+});
+
+runCase('Admin user management: enable, disable, reset-password, and update-scopes lifecycle', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $hash = password_hash('mgmt12345', PASSWORD_BCRYPT);
+    $pdo->exec("INSERT INTO users(username,password_hash,display_name,role,failed_login_attempts,password_reset_required,account_enabled,created_at,updated_at) VALUES('mgmt_test','{$hash}','Mgmt Test','staff',0,0,1,NOW(),NOW())");
+    $mgmtId = (int) $pdo->lastInsertId();
+    tassert($mgmtId > 0, 'mgmt_test fixture must be created');
+
+    $disable = api('POST', '/api/v1/admin/users/' . $mgmtId . '/disable', [], $adminToken);
+    assertJsonContract($disable, 'disable user');
+    tassert($disable['status'] === 200, 'disable user should return 200');
+
+    $enable = api('POST', '/api/v1/admin/users/' . $mgmtId . '/enable', [], $adminToken);
+    assertJsonContract($enable, 'enable user');
+    tassert($enable['status'] === 200, 'enable user should return 200');
+
+    $resetPw = api('POST', '/api/v1/admin/users/' . $mgmtId . '/reset-password', ['new_password' => 'newmgmt12345'], $adminToken);
+    assertJsonContract($resetPw, 'reset user password');
+    tassert($resetPw['status'] === 200, 'reset-password should return 200');
+
+    $updateScopes = api('POST', '/api/v1/admin/users/' . $mgmtId . '/scopes', ['store' => '1', 'warehouse' => '1', 'department' => '1'], $adminToken);
+    assertJsonContract($updateScopes, 'update user scopes');
+    tassert(in_array($updateScopes['status'], [200, 422], true), 'update-scopes should return 200 or 422');
+});
+
+runCase('Admin ACL mutation: createRole, grantRolePermissionResource, and assignRoleToUser', function () use (&$adminToken): void {
+    $pdo = pdo();
+    $roleCode = 'cov_role_' . substr(md5((string) microtime(true)), 0, 6);
+
+    $createRole = api('POST', '/api/v1/admin/roles', ['code' => $roleCode, 'name' => 'Coverage Role'], $adminToken);
+    assertJsonContract($createRole, 'POST /api/v1/admin/roles');
+    tassert($createRole['status'] === 201, 'createRole should return 201');
+    $roleId = (int) ($createRole['json']['data']['id'] ?? 0);
+    tassert($roleId > 0, 'created role must have a positive id');
+
+    $permId = (int) ($pdo->query("SELECT id FROM permissions WHERE code='read' LIMIT 1")->fetchColumn() ?: 0);
+    $resId  = (int) ($pdo->query("SELECT id FROM resources WHERE code='recipe' LIMIT 1")->fetchColumn() ?: 0);
+    tassert($permId > 0 && $resId > 0, 'permission and resource fixtures must exist');
+
+    $grant = api('POST', '/api/v1/admin/grants', ['role_id' => $roleId, 'permission_id' => $permId, 'resource_id' => $resId], $adminToken);
+    assertJsonContract($grant, 'POST /api/v1/admin/grants');
+    tassert($grant['status'] === 201, 'grantRolePermissionResource should return 201');
+
+    $targetUserId = (int) ($pdo->query("SELECT id FROM users WHERE username='lock_user' LIMIT 1")->fetchColumn() ?: 0);
+    tassert($targetUserId > 0, 'lock_user fixture must exist for role assignment');
+
+    $assign = api('POST', '/api/v1/admin/user-roles', ['user_id' => $targetUserId, 'role_id' => $roleId], $adminToken);
+    assertJsonContract($assign, 'POST /api/v1/admin/user-roles');
+    tassert(in_array($assign['status'], [201, 422], true), 'assignRoleToUser should return 201 or 422');
+});
+
+runCase('Reporting anomalies returns alert list; exportBookingsCsv returns CSV-structured data', function () use (&$adminToken, &$scopedToken): void {
+    $anomalies = api('GET', '/api/v1/reporting/anomalies', [], $adminToken);
+    assertJsonContract($anomalies, 'GET /api/v1/reporting/anomalies');
+    tassert($anomalies['status'] === 200, 'anomalies should return 200');
+    tassert(isOk($anomalies), 'anomalies must succeed');
+
+    $csv = api('GET', '/api/v1/reporting/exports/bookings-csv', [], $adminToken);
+    assertJsonContract($csv, 'GET /api/v1/reporting/exports/bookings-csv');
+    tassert($csv['status'] === 200, 'exportBookingsCsv should return 200');
+    tassert(isOk($csv), 'exportBookingsCsv must succeed');
+
+    $scopedAnomaly = api('GET', '/api/v1/reporting/anomalies', [], $scopedToken);
+    tassert(in_array($scopedAnomaly['status'], [200, 403], true), 'anomalies for scoped user must return 200 or 403');
+});
+
+runCase('Seeded role users for all five roles can authenticate successfully', function (): void {
+    foreach ([
+        ['manager_user',  'manager12345'],
+        ['finance_user',  'finance12345'],
+        ['customer_user', 'cust12345pp'],
+    ] as [$username, $password]) {
+        $r = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => $password]);
+        assertJsonContract($r, "login {$username}");
+        tassert($r['status'] === 200, "{$username} login should return 200");
+        tassert(isOk($r), "{$username} login must succeed");
+        tassert((string) ($r['json']['data']['token'] ?? '') !== '', "{$username} must receive a token");
+    }
+});
+
+runCase('Manager role is denied payment endpoints; Finance role can read payments', function (): void {
+    $mgr = api('POST', '/api/v1/identity/login', ['username' => 'manager_user', 'password' => 'manager12345']);
+    $mgrToken = (string) ($mgr['json']['data']['token'] ?? '');
+    tassert($mgrToken !== '', 'manager token required');
+
+    $fin = api('POST', '/api/v1/identity/login', ['username' => 'finance_user', 'password' => 'finance12345']);
+    $finToken = (string) ($fin['json']['data']['token'] ?? '');
+    tassert($finToken !== '', 'finance token required');
+
+    $mgrPayments = api('GET', '/api/v1/payments', [], $mgrToken);
+    tassert($mgrPayments['status'] === 403, 'manager must be denied payment:read (HTTP 403)');
+
+    $finPayments = api('GET', '/api/v1/payments', [], $finToken);
+    assertJsonContract($finPayments, 'finance payments index');
+    tassert($finPayments['status'] === 200, 'finance user must be allowed payment:read (HTTP 200)');
+    tassert(array_key_exists('items', $finPayments['json']['data'] ?? []), 'finance payments index must include items');
+
+    $cust = api('POST', '/api/v1/identity/login', ['username' => 'customer_user', 'password' => 'cust12345pp']);
+    $custToken = (string) ($cust['json']['data']['token'] ?? '');
+    tassert($custToken !== '', 'customer token required');
+
+    $custAdmin = api('GET', '/api/v1/admin/users', [], $custToken);
+    tassert($custAdmin['status'] === 403, 'customer must be denied admin endpoint (HTTP 403)');
 });
 
 echo "API tests passed={$results['passed']} failed={$results['failed']}\n";

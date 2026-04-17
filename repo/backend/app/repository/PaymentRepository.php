@@ -288,6 +288,10 @@ final class PaymentRepository
 
     public function issueInScope(int $issueId, array $scopes = [], array $authUser = []): bool
     {
+        if (\app\service\ScopeHelper::isGlobalAdmin($authUser)) {
+            return Db::name('finance_reconciliation_items')->where('id', $issueId)->count() > 0;
+        }
+
         $query = Db::name('finance_reconciliation_items')->alias('i')
             ->leftJoin('gateway_orders g', 'g.order_ref = i.gateway_order_ref')
             ->leftJoin('bookings b', 'b.id = g.booking_id')

@@ -27,6 +27,6 @@ printf 'PANTRYPILOT_GATEWAY_HMAC_SECRET=%s\nPANTRYPILOT_CRYPTO_KEY=%s\nPANTRYPIL
     "$PANTRYPILOT_CRYPTO_KEY" \
     "$PANTRYPILOT_CRYPTO_IV" \
     > /run/pantrypilot-runtime.env
-chmod 600 /run/pantrypilot-runtime.env
+chmod 644 /run/pantrypilot-runtime.env
 
 exec "$@"

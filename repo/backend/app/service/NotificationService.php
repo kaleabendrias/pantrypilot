@@ -69,12 +69,21 @@ final class NotificationService
 
     public function setOptOut(int $userId, bool $optOut): array
     {
-        Db::name('user_message_preferences')->insert([
-            'user_id' => $userId,
-            'marketing_opt_out' => $optOut ? 1 : 0,
-            'created_at' => $this->nowString(),
-            'updated_at' => $this->nowString(),
-        ], true);
+        $optOutInt = $optOut ? 1 : 0;
+        $now = $this->nowString();
+
+        try {
+            Db::name('user_message_preferences')->insert([
+                'user_id'           => $userId,
+                'marketing_opt_out' => $optOutInt,
+                'created_at'        => $now,
+                'updated_at'        => $now,
+            ]);
+        } catch (\Throwable) {
+            Db::name('user_message_preferences')
+                ->where('user_id', $userId)
+                ->update(['marketing_opt_out' => $optOutInt, 'updated_at' => $now]);
+        }
 
         return ['user_id' => $userId, 'marketing_opt_out' => $optOut];
     }
