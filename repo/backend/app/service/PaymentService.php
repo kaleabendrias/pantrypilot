@@ -229,7 +229,7 @@ final class PaymentService
         return ['batch_ref' => $rec['batch_ref'], 'issues' => $issues, 'variance' => $rec['variance']];
     }
 
-    public function repairReconciliationIssue(int $issueId, string $note, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = ''): array
+    public function repairReconciliationIssue(int $issueId, string $note, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
             throw new ValidationException('Critical operation requires valid re-auth token');
@@ -242,11 +242,11 @@ final class PaymentService
         }
 
         $ok = $this->paymentRepository->repairIssue($issueId, $note);
-        $this->administrationService->audit('finance.repair_issue', 'finance_reconciliation_items', (string) $issueId, $actorId, ['note' => $note]);
+        $this->administrationService->audit('finance.repair_issue', 'finance_reconciliation_items', (string) $issueId, $actorId, ['note' => $note], $ip, $userAgent, $requestId);
         return ['repaired' => $ok];
     }
 
-    public function closeReconciliationBatch(string $batchRef, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = ''): array
+    public function closeReconciliationBatch(string $batchRef, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
             throw new ValidationException('Critical operation requires valid re-auth token');
@@ -259,11 +259,11 @@ final class PaymentService
         }
 
         $ok = $this->paymentRepository->closeReconciliation($batchRef);
-        $this->administrationService->audit('finance.close_reconciliation', 'reconciliation', $batchRef, $actorId, ['status' => 'closed']);
+        $this->administrationService->audit('finance.close_reconciliation', 'reconciliation', $batchRef, $actorId, ['status' => 'closed'], $ip, $userAgent, $requestId);
         return ['closed' => $ok];
     }
 
-    public function refund(string $paymentRef, int $actorId, string $reauthToken, array $scopes = [], array $authUser = []): array
+    public function refund(string $paymentRef, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
             throw new ValidationException('Critical operation requires valid re-auth token');
@@ -278,12 +278,12 @@ final class PaymentService
         }
 
         $ok = $this->paymentRepository->markRefunded((int) $payment['id']);
-        $this->administrationService->audit('finance.refund', 'payments', $paymentRef, $actorId, ['result' => $ok]);
+        $this->administrationService->audit('finance.refund', 'payments', $paymentRef, $actorId, ['result' => $ok], $ip, $userAgent, $requestId);
         Log::info('payments.refund.completed', ['payment_ref' => $paymentRef, 'actor_id' => $actorId, 'result' => $ok]);
         return ['refunded' => $ok, 'payment_ref' => $paymentRef];
     }
 
-    public function adjust(string $paymentRef, float $amount, string $reason, int $actorId, string $reauthToken, array $scopes = [], array $authUser = []): array
+    public function adjust(string $paymentRef, float $amount, string $reason, int $actorId, string $reauthToken, array $scopes = [], array $authUser = [], string $ip = '', string $userAgent = '', string $requestId = ''): array
     {
         if (!$this->administrationService->consumeCriticalReauthToken($actorId, $reauthToken)) {
             throw new ValidationException('Critical operation requires valid re-auth token');
@@ -298,7 +298,7 @@ final class PaymentService
         }
 
         $id = $this->paymentRepository->addAdjustment((int) $payment['id'], $amount, $reason, $actorId);
-        $this->administrationService->audit('finance.adjustment', 'payments', $paymentRef, $actorId, ['amount' => $amount, 'reason' => $reason]);
+        $this->administrationService->audit('finance.adjustment', 'payments', $paymentRef, $actorId, ['amount' => $amount, 'reason' => $reason], $ip, $userAgent, $requestId);
         Log::info('payments.adjustment.completed', ['payment_ref' => $paymentRef, 'actor_id' => $actorId, 'adjustment_id' => $id, 'amount' => $amount]);
         return ['adjustment_id' => $id, 'payment_ref' => $paymentRef];
     }

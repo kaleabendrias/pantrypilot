@@ -78,9 +78,11 @@ Exit code `0` on full pass; non-zero on any failure.
 
 ## Seeded Credentials
 
-The database is pre-seeded with the following test users on startup. Use these credentials to verify authentication and role-based access controls.
+The database is pre-seeded with the following users every time the test suite runs (via `reset_test_data.php`). Use these credentials to log in immediately — no setup or password rotation required.
 
-| Role | Username | Password | Notes |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `admin` | `admin12345` | Full access to all modules including ACL administration. |
-| **Ops Staff** | `scoped_user` | `scope123456` | Operations role: recipes, bookings, notifications (scoped to store 1). |
+| Role | Username | Password | Scope | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Admin** | `admin` | `admin12345` | Global | Full access to all modules, ACL administration, and audit logs. |
+| **Ops Staff** | `scoped_user` | `scope123456` | Store 1 / Warehouse 1 / Department 1 | Recipes, bookings, notifications — data-scoped. |
+
+> Passwords meet the system policy (≥ 10 characters, letters + numbers). To rotate a password after login, `POST /api/v1/identity/rotate-password` with `username`, `current_password`, and `new_password`.

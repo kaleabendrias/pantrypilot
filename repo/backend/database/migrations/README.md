@@ -8,5 +8,6 @@ These SQL files are organized by module boundaries and can be applied by any SQL
 - `202603270004_events_payments_admin.sql`: events, payments, files, audit.
 - `202603270005_security_and_search.sql`: auth lockouts, RBAC, data scope, and search indexes.
 - `202603270006_workflow_finance_compliance.sql`: booking constraints, operations, finance gateway, messaging, and governance.
+- `202603270007_complete_schema_alignment.sql`: bootstrap_tokens table, audit log ip_address column, and remaining schema alignment for AEAD crypto and critical reauth flows.
 
 For containerized startup, `docker/mysql/init/001_schema.sql` provides the same schema bootstrap in one file.

@@ -12,7 +12,14 @@ final class AdminRepository
         return (int) Db::transaction(function () use ($data): int {
             $prevRow = Db::name('audit_logs')->order('id', 'desc')->lock(true)->field('hash_current')->find();
             $prevHash = (string) ($prevRow['hash_current'] ?? 'GENESIS');
-            $payload = json_encode($data['metadata'] ?? [], JSON_UNESCAPED_UNICODE);
+            $meta = $data['metadata'] ?? [];
+            if (!empty($data['user_agent'])) {
+                $meta['_user_agent'] = (string) $data['user_agent'];
+            }
+            if (!empty($data['request_id'])) {
+                $meta['_request_id'] = (string) $data['request_id'];
+            }
+            $payload = json_encode($meta, JSON_UNESCAPED_UNICODE);
             $now = date('c');
             $currentHash = hash('sha256', implode('|', [
                 $prevHash,
@@ -25,15 +32,15 @@ final class AdminRepository
             ]));
 
             return (int) Db::name('audit_logs')->insertGetId([
-                'actor_id' => $data['actor_id'] ?? null,
-                'action' => $data['action'],
-                'target_type' => $data['target_type'],
-                'target_id' => $data['target_id'],
-                'metadata' => $payload,
-                'prev_hash' => $prevHash,
+                'actor_id'     => $data['actor_id'] ?? null,
+                'action'       => $data['action'],
+                'target_type'  => $data['target_type'],
+                'target_id'    => $data['target_id'],
+                'metadata'     => $payload,
+                'prev_hash'    => $prevHash,
                 'hash_current' => $currentHash,
-                'ip_address' => $data['ip_address'] ?? null,
-                'created_at' => date('Y-m-d H:i:s'),
+                'ip_address'   => $data['ip_address'] ?? null,
+                'created_at'   => date('Y-m-d H:i:s'),
             ]);
         });
     }

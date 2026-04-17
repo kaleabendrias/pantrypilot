@@ -24,9 +24,6 @@ services:
         condition: service_healthy
     ports:
       - "8000:80"
-    env_file:
-      - path: .env
-        required: false
     environment:
       DB_HOST: mysql
       DB_PORT: "3306"
@@ -36,6 +33,7 @@ services:
       PANTRYPILOT_GATEWAY_HMAC_SECRET: ${PANTRYPILOT_GATEWAY_HMAC_SECRET:-}
       PANTRYPILOT_CRYPTO_KEY: ${PANTRYPILOT_CRYPTO_KEY:-}
       PANTRYPILOT_CRYPTO_IV: ${PANTRYPILOT_CRYPTO_IV:-}
+      PANTRYPILOT_ALLOWED_ORIGINS: ${PANTRYPILOT_ALLOWED_ORIGINS:-http://localhost:8080}
     volumes:
       - ./backend:/var/www/html
       - ./tests:/workspace/tests:ro
@@ -57,9 +55,6 @@ services:
     command: --default-authentication-plugin=mysql_native_password
     ports:
       - "3307:3306"
-    env_file:
-      - path: .env
-        required: false
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
       MYSQL_DATABASE: ${DB_NAME:-pantrypilot}

@@ -35,22 +35,21 @@
   layui.use([], async () => {
     P.setQueue(P.getQueue());
     if (P.getToken()) document.getElementById("authState").textContent = "Authenticated";
-    await P.loadExplicitTestDefaults();
-    P.applyInitialDefaults();
 
-    // Bind auth
+    // Bind all DOM event listeners synchronously before any async operations
     document.getElementById("btnLogin").addEventListener("click", async () => {
       try { await P.login(); } catch (e) { layui.layer.msg(e.message); }
     });
     document.getElementById("btnSync").addEventListener("click", P.syncQueue);
-
-    // Bind domain modules
     P.bindRecipeEvents();
     P.bindBookingEvents();
     P.bindOpsEvents();
     P.bindFinanceEvents();
     P.bindAdminEvents();
     bindPersistenceListeners();
+
+    await P.loadExplicitTestDefaults();
+    P.applyInitialDefaults();
 
     // Initial data load
     await P.loadPickupPoints();

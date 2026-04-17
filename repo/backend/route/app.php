@@ -20,7 +20,7 @@ Route::get('/', function () {
 Route::group('api/v1', function () {
     Route::post('identity/login', [IdentityController::class, 'login']);
     Route::post('identity/register', [IdentityController::class, 'register']);
-    Route::post('identity/rotate-password', [IdentityController::class, 'rotateBootstrapPassword']);
+    Route::post('identity/rotate-password', [IdentityController::class, 'rotatePassword']);
 
     Route::get('recipes/search', [RecipeController::class, 'search']);
     Route::get('recipes', [RecipeController::class, 'index']);

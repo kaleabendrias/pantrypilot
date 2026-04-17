@@ -41,26 +41,28 @@ final class NotificationService
         $store = $scopes['store'] ?? [];
         $warehouse = $scopes['warehouse'] ?? [];
         $department = $scopes['department'] ?? [];
+        // NULL scope rows are global/cross-tenant events visible only to admins.
+        // All non-admin queries must use strict equality — never OR-with-NULL.
         if ($store !== []) {
             $query->whereIn('me.store_id', $store);
         } elseif (!empty($authUser['store_id'])) {
-            $query->where(function ($q) use ($authUser) {
-                $q->where('me.store_id', (string) $authUser['store_id'])->whereOr('me.store_id', null);
-            });
+            $query->where('me.store_id', (string) $authUser['store_id']);
+        } else {
+            $query->whereNotNull('me.store_id');
         }
         if ($warehouse !== []) {
             $query->whereIn('me.warehouse_id', $warehouse);
         } elseif (!empty($authUser['warehouse_id'])) {
-            $query->where(function ($q) use ($authUser) {
-                $q->where('me.warehouse_id', (string) $authUser['warehouse_id'])->whereOr('me.warehouse_id', null);
-            });
+            $query->where('me.warehouse_id', (string) $authUser['warehouse_id']);
+        } else {
+            $query->whereNotNull('me.warehouse_id');
         }
         if ($department !== []) {
             $query->whereIn('me.department_id', $department);
         } elseif (!empty($authUser['department_id'])) {
-            $query->where(function ($q) use ($authUser) {
-                $q->where('me.department_id', (string) $authUser['department_id'])->whereOr('me.department_id', null);
-            });
+            $query->where('me.department_id', (string) $authUser['department_id']);
+        } else {
+            $query->whereNotNull('me.department_id');
         }
         return $query->order('id', 'desc')->limit(200)->select()->toArray();
     }

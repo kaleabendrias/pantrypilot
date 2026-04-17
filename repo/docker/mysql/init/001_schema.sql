@@ -382,7 +382,7 @@ JOIN permissions p
 JOIN resources rs
 WHERE r.code = 'admin';
 
--- Customer: read recipes, read/write bookings, read notifications
+-- Customer: read recipes, read/write bookings, notification_self only (not notification feed/analytics)
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'recipe';
@@ -392,9 +392,6 @@ WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'booking';
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'customer' AND p.code = 'write' AND rs.code = 'booking';
-INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
-SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
-WHERE r.code = 'customer' AND p.code = 'read' AND rs.code = 'notification';
 INSERT IGNORE INTO role_permission_resources (role_id, permission_id, resource_id)
 SELECT r.id, p.id, rs.id FROM roles r, permissions p, resources rs
 WHERE r.code = 'customer' AND p.code IN ('read','write') AND rs.code = 'notification_self';
@@ -631,6 +628,20 @@ CREATE TABLE IF NOT EXISTS critical_reauth_tokens (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_reauth_user (user_id, expire_at),
   CONSTRAINT fk_reauth_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- One-time token issued by login when password_reset_required=1.
+-- The rotate-password endpoint validates and consumes this token in lieu of
+-- public access; it is never reusable and expires after a short TTL.
+CREATE TABLE IF NOT EXISTS bootstrap_tokens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expire_at DATETIME NOT NULL,
+  consumed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_bootstrap_user (user_id),
+  CONSTRAINT fk_bootstrap_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stock_snapshots (

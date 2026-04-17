@@ -337,11 +337,10 @@ foreach (['read','write','approve'] as $perm) {
 $stmtRpr->execute([$roleMap['finance'], $permMap['read'], $resMap['reporting'], $now]);
 $stmtRpr->execute([$roleMap['finance'], $permMap['read'], $resMap['booking'], $now]);
 
-// Customer: read recipes, read/write bookings, read notifications, read booking pickup-points
+// Customer: read recipes, read/write bookings, notification_self only (not notification feed/analytics)
 $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['recipe'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['booking'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['booking'], $now]);
-$stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['notification'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['read'], $resMap['notification_self'], $now]);
 $stmtRpr->execute([$roleMap['customer'], $permMap['write'], $resMap['notification_self'], $now]);
 

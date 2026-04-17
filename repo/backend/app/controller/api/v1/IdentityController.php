@@ -49,15 +49,15 @@ final class IdentityController extends BaseController
         }
     }
 
-    public function rotateBootstrapPassword()
+    public function rotatePassword()
     {
         try {
             $payload = $this->request->post();
             if (!isset($payload['username'], $payload['current_password'], $payload['new_password'])) {
-                return JsonResponse::error('username, current_password, and new_password are required', 422);
+                return JsonResponse::error('username, current_password and new_password are required', 422);
             }
 
-            $result = $this->identityService->rotateBootstrapPassword(
+            $result = $this->identityService->rotatePassword(
                 (string) $payload['username'],
                 (string) $payload['current_password'],
                 (string) $payload['new_password']

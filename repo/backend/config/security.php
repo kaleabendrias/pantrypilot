@@ -8,15 +8,18 @@ $env = static function (string $key, string $fallback = ''): string {
     return trim($value);
 };
 
-$hmacSecret = $env('PANTRYPILOT_GATEWAY_HMAC_SECRET', 'insecure-default-hmac-secret-replace-in-production');
-$cryptoKey = $env('PANTRYPILOT_CRYPTO_KEY', 'insecure-default-key-32b!!!!');
-$cryptoIv = $env('PANTRYPILOT_CRYPTO_IV', 'insecure-iv-16b!');
+$hmacSecret = $env('PANTRYPILOT_GATEWAY_HMAC_SECRET', '');
+$cryptoKey  = $env('PANTRYPILOT_CRYPTO_KEY', '');
+$cryptoIv   = $env('PANTRYPILOT_CRYPTO_IV', '');
 
-if (strlen($cryptoKey) < 16) {
-    $cryptoKey = str_pad($cryptoKey, 16, '!');
+if ($hmacSecret === '') {
+    throw new \RuntimeException('PANTRYPILOT_GATEWAY_HMAC_SECRET environment variable is required and must not be empty');
 }
-if (strlen($cryptoIv) < 16) {
-    $cryptoIv = str_pad($cryptoIv, 16, '!');
+if ($cryptoKey === '') {
+    throw new \RuntimeException('PANTRYPILOT_CRYPTO_KEY environment variable is required and must not be empty');
+}
+if ($cryptoIv === '') {
+    throw new \RuntimeException('PANTRYPILOT_CRYPTO_IV environment variable is required and must not be empty');
 }
 
 return [

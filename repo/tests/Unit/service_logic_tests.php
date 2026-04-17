@@ -5,9 +5,9 @@ require __DIR__ . '/bootstrap.php';
 
 if (!class_exists('think\\facade\\Config', false)) {
     $__envGet = function(string $k, string $fb): string { $v = getenv($k); return (is_string($v) && trim($v) !== '') ? trim($v) : $fb; };
-    $__hmacSecret = $__envGet('PANTRYPILOT_GATEWAY_HMAC_SECRET', 'insecure-default-hmac-secret-replace-in-production');
-    $__cryptoKey = $__envGet('PANTRYPILOT_CRYPTO_KEY', 'insecure-default-key-32b!!!!');
-    $__cryptoIv = $__envGet('PANTRYPILOT_CRYPTO_IV', 'insecure-iv-16b!');
+    $__hmacSecret = $__envGet('PANTRYPILOT_GATEWAY_HMAC_SECRET', '');
+    $__cryptoKey = $__envGet('PANTRYPILOT_CRYPTO_KEY', '');
+    $__cryptoIv = $__envGet('PANTRYPILOT_CRYPTO_IV', '');
     eval(<<<PHP
 namespace think\\facade;
 final class Config {
@@ -389,7 +389,7 @@ runTest('Payment service verifies callback signature and idempotency', function 
     $payload = ['amount' => 9.99, 'order_ref' => $order['order_ref'], 'status' => 'SUCCESS', 'transaction_ref' => 'TX-100'];
     ksort($payload);
     $_hv = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
-    $hmacSecret = (is_string($_hv) && trim($_hv) !== '') ? trim($_hv) : 'insecure-default-hmac-secret-replace-in-production';
+    $hmacSecret = (is_string($_hv) && trim($_hv) !== '') ? trim($_hv) : '';
     $sig = hash_hmac('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE), $hmacSecret);
 
     $ok = $svc->processGatewayCallback($payload, $sig);

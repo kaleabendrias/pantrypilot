@@ -32,6 +32,13 @@ step() {
   fi
 }
 
+# Wrap a PHP invocation so it runs with the runtime-generated secrets in scope.
+# docker-exec sessions don't inherit exports from PID 1 (the entrypoint), so we
+# source the file the entrypoint wrote and exec the given command inside bash.
+secrets_exec() {
+  docker compose exec -T api bash -c '. /run/pantrypilot-runtime.env && exec '"$*"
+}
+
 require_running api
 require_running mysql
 
@@ -42,21 +49,24 @@ step "Reset deterministic seed data" \
   docker compose exec -T api php /var/www/html/scripts/reset_test_data.php
 
 step "Run unit tests (domain)" \
-  docker compose exec -T api php /workspace/tests/Unit/domain_tests.php
+  secrets_exec "php /workspace/tests/Unit/domain_tests.php"
 
 step "Run unit tests (service)" \
-  docker compose exec -T api php /workspace/tests/Unit/service_tests.php
+  secrets_exec "php /workspace/tests/Unit/service_tests.php"
 
 step "Run unit tests (service logic)" \
-  docker compose exec -T api php /workspace/tests/Unit/service_logic_tests.php
+  secrets_exec "php /workspace/tests/Unit/service_logic_tests.php"
 
 step "Run API integration tests" \
-  docker compose exec -T api env PANTRYPILOT_TEST_NOW="2026-01-15 10:30:00" php /workspace/tests/Integration/run_api_tests.php
+  secrets_exec "env PANTRYPILOT_TEST_NOW='2026-01-15 10:30:00' php /workspace/tests/Integration/run_api_tests.php"
+
+step "Run reconciliation isolated tests" \
+  secrets_exec "php /workspace/tests/Integration/run_reconcile_tests.php"
 
 step "Run frontend unit tests" \
-  docker compose exec -T api node /workspace/frontend/tests/app.test.js
+  secrets_exec "node /workspace/frontend/tests/app.test.js"
 
 step "Run FE-BE end-to-end tests" \
-  docker compose exec -T api php /workspace/tests/Integration/run_e2e_tests.php
+  secrets_exec "php /workspace/tests/Integration/run_e2e_tests.php"
 
 echo "\nAll tests passed"

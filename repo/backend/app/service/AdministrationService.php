@@ -39,14 +39,25 @@ final class AdministrationService
         return $this->maskSensitiveContacts($rows);
     }
 
-    public function audit(string $action, string $targetType, string $targetId, ?int $actorId = null, array $meta = []): int
-    {
+    public function audit(
+        string $action,
+        string $targetType,
+        string $targetId,
+        ?int $actorId = null,
+        array $meta = [],
+        string $ip = '',
+        string $userAgent = '',
+        string $requestId = ''
+    ): int {
         return $this->adminRepository->addAudit([
-            'actor_id' => $actorId,
-            'action' => $action,
+            'actor_id'   => $actorId,
+            'action'     => $action,
             'target_type' => $targetType,
-            'target_id' => $targetId,
-            'metadata' => $meta,
+            'target_id'  => $targetId,
+            'metadata'   => $meta,
+            'ip_address' => $ip !== '' ? $ip : null,
+            'user_agent' => $userAgent,
+            'request_id' => $requestId,
         ]);
     }
 

@@ -170,7 +170,9 @@ final class PaymentController extends BaseController
                     $reauthToken,
                     $this->request->middleware('data_scopes', []),
                     $authUser,
-                    (string) $this->request->ip()
+                    (string) $this->request->ip(),
+                    (string) $this->request->header('User-Agent', ''),
+                    (string) $this->request->header('X-Request-Id', '')
                 ),
                 'Issue repaired'
             );
@@ -192,7 +194,9 @@ final class PaymentController extends BaseController
                     $reauthToken,
                     $this->request->middleware('data_scopes', []),
                     $authUser,
-                    (string) $this->request->ip()
+                    (string) $this->request->ip(),
+                    (string) $this->request->header('User-Agent', ''),
+                    (string) $this->request->header('X-Request-Id', '')
                 ),
                 'Reconciliation closed'
             );
@@ -213,7 +217,10 @@ final class PaymentController extends BaseController
                     (int) ($authUser['id'] ?? 0),
                     $reauthToken,
                     $this->request->middleware('data_scopes', []),
-                    $authUser
+                    $authUser,
+                    (string) $this->request->ip(),
+                    (string) $this->request->header('User-Agent', ''),
+                    (string) $this->request->header('X-Request-Id', '')
                 ),
                 'Refund completed'
             );
@@ -238,7 +245,10 @@ final class PaymentController extends BaseController
                     (int) ($authUser['id'] ?? 0),
                     $reauthToken,
                     $this->request->middleware('data_scopes', []),
-                    $authUser
+                    $authUser,
+                    (string) $this->request->ip(),
+                    (string) $this->request->header('User-Agent', ''),
+                    (string) $this->request->header('X-Request-Id', '')
                 ),
                 'Adjustment completed'
             );

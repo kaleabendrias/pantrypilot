@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 $results = ['passed' => 0, 'failed' => 0];
 $_hmacRaw = getenv('PANTRYPILOT_GATEWAY_HMAC_SECRET');
-$GATEWAY_HMAC_SECRET = (is_string($_hmacRaw) && trim($_hmacRaw) !== '') ? trim($_hmacRaw) : 'insecure-default-hmac-secret-replace-in-production';
+$GATEWAY_HMAC_SECRET = (is_string($_hmacRaw) && trim($_hmacRaw) !== '') ? trim($_hmacRaw) : '';
 
 function tassert(bool $condition, string $message): void
 {
@@ -1835,18 +1835,32 @@ runCase('Admin user list and audit log scope filtering works for global admin', 
     tassert($auditAdmin['status'] === 200, 'global admin should see audit logs');
 });
 
-runCase('Scoped finance user cannot see cross-scope reconciliation batches', function () use (&$scopedToken, &$adminToken): void {
-    $batches = api('GET', '/api/v1/payments/reconcile/batches', [], $scopedToken);
-    if ($batches['status'] === 200) {
-        $items = $batches['json']['data']['items'] ?? [];
-        foreach ($items as $batch) {
-            if (isset($batch['batch_ref'])) {
-                $issues = api('GET', '/api/v1/payments/reconcile/issues?batch_ref=' . urlencode($batch['batch_ref']), [], $scopedToken);
-                tassert($issues['status'] === 200, 'issue listing should succeed');
-            }
-        }
-    }
-    tassert(true, 'scoped finance read smoke test complete');
+runCase('Reconcile issues list returns deterministic results for known batch', function () use (&$adminToken, &$scopedToken): void {
+    $pdo = pdo();
+    $batchRef = 'TEST-ISSUES-' . strtoupper(bin2hex(random_bytes(3)));
+
+    // Seed a reconciliation batch with two known issues directly
+    $pdo->prepare("INSERT INTO reconciliation(batch_ref,period_start,period_end,expected_total,actual_total,variance,status,created_at) VALUES(?,?,?,?,?,?,?,NOW())")
+        ->execute([$batchRef, date('Y-m-d'), date('Y-m-d'), 200.0, 100.0, -100.0, 'abnormal']);
+    $pdo->prepare("INSERT INTO finance_reconciliation_items(batch_ref,gateway_order_ref,issue_type,repaired,created_at) VALUES(?,?,?,?,NOW())")
+        ->execute([$batchRef, 'GW-ISS-001', 'missed_order', 0]);
+    $pdo->prepare("INSERT INTO finance_reconciliation_items(batch_ref,gateway_order_ref,issue_type,repaired,created_at) VALUES(?,?,?,?,NOW())")
+        ->execute([$batchRef, 'GW-ISS-002', 'missed_order', 0]);
+
+    // Admin can fetch issues for the batch
+    $issues = api('GET', '/api/v1/payments/reconcile/issues?batch_ref=' . urlencode($batchRef), [], $adminToken);
+    assertJsonContract($issues, 'GET /api/v1/payments/reconcile/issues');
+    tassert($issues['status'] === 200, 'issues list should return 200');
+    $items = $issues['json']['data']['items'] ?? null;
+    tassert(is_array($items), 'issues data must include items array');
+    tassert(count($items) === 2, 'issues list must return exactly 2 seeded issues');
+    $refs = array_column($items, 'gateway_order_ref');
+    tassert(in_array('GW-ISS-001', $refs, true), 'first seeded issue must be present');
+    tassert(in_array('GW-ISS-002', $refs, true), 'second seeded issue must be present');
+
+    // Non-payment user is denied
+    $denied = api('GET', '/api/v1/payments/reconcile/issues?batch_ref=' . urlencode($batchRef), [], $scopedToken);
+    tassert($denied['status'] === 403, 'non-payment user must be denied reconcile issues list');
 });
 
 runCase('Non-global-admin cannot create roles or grant permissions', function () use (&$scopedToken, &$adminToken): void {
@@ -2100,9 +2114,9 @@ runCase('Customer can opt-out, view inbox, mark-read, and mark-click on own mess
     ], $custToken);
     tassert($queueAttempt['status'] === 403, 'customer must not queue notification events');
 
-    // Customer CANNOT view notification analytics (notification:read is for events feed only)
+    // Customer cannot view notification analytics — notification:read is not granted to customer role
     $analytics = api('GET', '/api/v1/notifications/analytics', [], $custToken);
-    tassert($analytics['status'] === 200 || $analytics['status'] === 403, 'customer analytics access is governed by notification:read');
+    tassert($analytics['status'] === 403, 'customer must be denied notification analytics (notification:read not granted to customer role)');
 });
 
 runCase('Customer cannot mark-read messages belonging to other users', function () use (&$adminToken): void {
@@ -2138,6 +2152,55 @@ runCase('Customer cannot mark-read messages belonging to other users', function 
     tassert($ownRead['status'] === 200, 'customer 1 should mark-read own message');
 });
 
+runCase('Password rotation enforces lockout after repeated wrong-password attempts', function (): void {
+    $pdo = pdo();
+    $user = 'rotlock_' . bin2hex(random_bytes(3));
+    $correctPass = 'correctpass99';
+    $hash = password_hash($correctPass, PASSWORD_BCRYPT);
+    $now = date('Y-m-d H:i:s');
+    $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,password_reset_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$user, $hash, 'LockTest', 'staff', '1', '1', '1', 0, 0, $now, $now]);
+
+    // 5 wrong-password rotate attempts trigger the lockout via failed_login_attempts
+    for ($i = 0; $i < 5; $i++) {
+        $r = api('POST', '/api/v1/identity/rotate-password', [
+            'username' => $user, 'current_password' => 'wrongpass99', 'new_password' => 'newpass999999',
+        ]);
+        tassert($r['status'] === 422, "wrong rotate attempt {$i} should return 422");
+    }
+
+    // Correct password after lockout threshold — rotate-password must now be blocked
+    $rotateBlocked = api('POST', '/api/v1/identity/rotate-password', [
+        'username' => $user, 'current_password' => $correctPass, 'new_password' => 'newpass999999',
+    ]);
+    tassert($rotateBlocked['status'] === 422, 'rotate-password must block locked accounts');
+    tassert(
+        str_contains(strtolower((string) ($rotateBlocked['json']['message'] ?? '')), 'lock'),
+        'rotate locked response must mention lockout'
+    );
+});
+
+runCase('Customer is denied notification events feed and analytics (notification:read not granted)', function () use (&$adminToken): void {
+    $username = 'cust_notif_acl_' . bin2hex(random_bytes(3));
+    $reg = api('POST', '/api/v1/identity/register', ['username' => $username, 'password' => 'customerpass99']);
+    tassert($reg['status'] === 201, 'customer registration must succeed');
+    $login = api('POST', '/api/v1/identity/login', ['username' => $username, 'password' => 'customerpass99']);
+    $custToken = (string) ($login['json']['data']['token'] ?? '');
+    tassert($custToken !== '', 'customer token required');
+
+    // Must be denied events feed
+    $events = api('GET', '/api/v1/notifications/events', [], $custToken);
+    tassert($events['status'] === 403, 'customer must be denied GET /notifications/events');
+
+    // Must be denied analytics
+    $analytics = api('GET', '/api/v1/notifications/analytics', [], $custToken);
+    tassert($analytics['status'] === 403, 'customer must be denied GET /notifications/analytics');
+
+    // Must still be allowed inbox (notification_self:read)
+    $inbox = api('GET', '/api/v1/notifications/inbox', [], $custToken);
+    tassert($inbox['status'] === 200, 'customer must be allowed GET /notifications/inbox');
+});
+
 runCase('Health check endpoint returns service status', function (): void {
     $url = 'http://127.0.0.1/';
     $raw = (string) file_get_contents($url, false, stream_context_create(['http' => ['method' => 'GET', 'ignore_errors' => true, 'timeout' => 10]]));
@@ -2148,7 +2211,7 @@ runCase('Health check endpoint returns service status', function (): void {
     tassert(($json['status'] ?? '') === 'running', 'root endpoint status field must be running');
 });
 
-runCase('Password rotation endpoint accepts valid bootstrap rotation and rejects second attempt', function (): void {
+runCase('Password rotation endpoint accepts current-credential rotation and rejects wrong password', function (): void {
     $pdo = pdo();
     $tempUser = 'rotate_test_' . bin2hex(random_bytes(3));
     $tempPass = 'temppass12345';
@@ -2156,24 +2219,34 @@ runCase('Password rotation endpoint accepts valid bootstrap rotation and rejects
     $hash = password_hash($tempPass, PASSWORD_BCRYPT);
     $now  = date('Y-m-d H:i:s');
     $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,password_reset_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        ->execute([$tempUser, $hash, 'Rotate Test', 'staff', '1', '1', '1', 0, 1, $now, $now]);
+        ->execute([$tempUser, $hash, 'Rotate Test', 'staff', '1', '1', '1', 0, 0, $now, $now]);
 
+    // Wrong current password must be rejected
+    $bad = api('POST', '/api/v1/identity/rotate-password', [
+        'username' => $tempUser, 'current_password' => 'wrongpass12345', 'new_password' => $newPass,
+    ]);
+    tassert($bad['status'] === 422, 'rotate-password with wrong current_password must return 422');
+
+    // Correct current password must succeed
     $r = api('POST', '/api/v1/identity/rotate-password', [
-        'username'         => $tempUser,
-        'current_password' => $tempPass,
-        'new_password'     => $newPass,
+        'username' => $tempUser, 'current_password' => $tempPass, 'new_password' => $newPass,
     ]);
     assertJsonContract($r, 'rotate-password success');
     tassert($r['status'] === 200, 'rotate-password should return 200');
     tassert(($r['json']['data']['password_rotated'] ?? false) === true, 'password_rotated flag must be true');
 
-    // Second rotation must be rejected because password_reset_required is now cleared
-    $r2 = api('POST', '/api/v1/identity/rotate-password', [
-        'username'         => $tempUser,
-        'current_password' => $newPass,
-        'new_password'     => 'anotherpass1234',
-    ]);
-    tassert($r2['status'] === 422, 'second rotation attempt on non-bootstrap account must be rejected');
+    // Missing required fields must return 422
+    $missing = api('POST', '/api/v1/identity/rotate-password', ['new_password' => 'anotherpass1234']);
+    tassert($missing['status'] === 422, 'rotate-password with missing fields must return 422');
+
+    // Old password must no longer work
+    $oldLogin = api('POST', '/api/v1/identity/login', ['username' => $tempUser, 'password' => $tempPass]);
+    tassert($oldLogin['status'] === 401, 'old password must be rejected after rotation');
+
+    // New password must now allow login
+    $loginAfter = api('POST', '/api/v1/identity/login', ['username' => $tempUser, 'password' => $newPass]);
+    tassert($loginAfter['status'] === 200, 'login with new password must succeed after rotation');
+    tassert(isset($loginAfter['json']['data']['token']), 'full session token must be issued after rotation');
 });
 
 runCase('Recipe list and create endpoints are accessible with proper authorization', function () use (&$adminToken, &$scopedToken): void {
@@ -2329,6 +2402,32 @@ runCase('Admin metadata read endpoints return role, permission, and resource lis
 
     $deniedRes = api('GET', '/api/v1/admin/resources', [], $scopedToken);
     tassert($deniedRes['status'] === 403, 'non-admin must be denied resources list');
+});
+
+runCase('Scoped user cannot see null-scope notification events (cross-tenant isolation)', function () use (&$adminToken, &$scopedToken): void {
+    $pdo = pdo();
+    $now = date('Y-m-d H:i:s');
+
+    // Insert a null-scope event (global/cross-tenant — visible only to admins)
+    $pdo->prepare(
+        'INSERT INTO message_events(event_type, channel, payload, store_id, warehouse_id, department_id, created_at) VALUES(?,?,?,NULL,NULL,NULL,?)'
+    )->execute(['null_scope_isolation_test', 'kiosk', '{}', $now]);
+    $nullScopeEventId = (int) $pdo->lastInsertId();
+    tassert($nullScopeEventId > 0, 'null-scope event fixture must be inserted');
+
+    // Admin must see the null-scope event
+    $adminEvents = api('GET', '/api/v1/notifications/events', [], $adminToken);
+    tassert($adminEvents['status'] === 200, 'admin must receive 200 on events list');
+    $adminItems = $adminEvents['json']['data']['items'] ?? [];
+    $adminIds = array_column($adminItems, 'id');
+    tassert(in_array($nullScopeEventId, array_map('intval', $adminIds), true), 'admin must see null-scope event');
+
+    // Scoped user must NOT see the null-scope event
+    $scopedEvents = api('GET', '/api/v1/notifications/events', [], $scopedToken);
+    tassert($scopedEvents['status'] === 200, 'scoped user must receive 200 on events list');
+    $scopedItems = $scopedEvents['json']['data']['items'] ?? [];
+    $scopedIds = array_map('intval', array_column($scopedItems, 'id'));
+    tassert(!in_array($nullScopeEventId, $scopedIds, true), 'scoped user must not see null-scope (cross-tenant) event');
 });
 
 echo "API tests passed={$results['passed']} failed={$results['failed']}\n";
