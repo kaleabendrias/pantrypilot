@@ -12,12 +12,23 @@ diag() {
   docker compose logs --no-color --tail=120 mysql || true
 }
 
-require_running() {
-  local svc="$1"
-  if ! docker compose ps --services --filter status=running | grep -q "^${svc}$"; then
-    echo "ERROR: service '${svc}' is not running."
-    echo "Start stack first with: docker compose up"
-    exit 1
+ensure_running() {
+  local running
+  running=$(docker compose ps --services --filter status=running 2>/dev/null || true)
+  if ! echo "$running" | grep -q "^api$" || ! echo "$running" | grep -q "^mysql$"; then
+    echo "\n>> Stack not running — starting with docker compose up --build -d"
+    docker compose up --build -d
+    echo "\n>> Waiting for containers to become healthy"
+    local deadline=$(( $(date +%s) + 120 ))
+    until docker compose ps --services --filter status=running 2>/dev/null | grep -q "^api$" && \
+          docker compose ps --services --filter status=running 2>/dev/null | grep -q "^mysql$"; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "ERROR: containers did not become healthy within 120s"
+        diag
+        exit 1
+      fi
+      sleep 3
+    done
   fi
 }
 
@@ -39,8 +50,7 @@ secrets_exec() {
   docker compose exec -T api bash -c '. /run/pantrypilot-runtime.env && exec '"$*"
 }
 
-require_running api
-require_running mysql
+ensure_running
 
 step "Wait for DNS + DB readiness from api" \
   docker compose exec -T api bash -c 'php /var/www/html/scripts/wait_for_mysql.php --host=${DB_HOST:-mysql} --port=${DB_PORT:-3306} --db=${DB_NAME:-pantrypilot} --user=${DB_USER:-pantry} --pass=${DB_PASS:-pantrypass} --timeout=120'
