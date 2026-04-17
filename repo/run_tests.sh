@@ -56,4 +56,7 @@ step "Run API integration tests" \
 step "Run frontend unit tests" \
   docker compose exec -T api node /workspace/frontend/tests/app.test.js
 
+step "Run FE-BE end-to-end tests" \
+  docker compose exec -T api php /workspace/tests/Integration/run_e2e_tests.php
+
 echo "\nAll tests passed"

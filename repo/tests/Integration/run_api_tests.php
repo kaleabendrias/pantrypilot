@@ -2138,5 +2138,198 @@ runCase('Customer cannot mark-read messages belonging to other users', function 
     tassert($ownRead['status'] === 200, 'customer 1 should mark-read own message');
 });
 
+runCase('Health check endpoint returns service status', function (): void {
+    $url = 'http://127.0.0.1/';
+    $raw = (string) file_get_contents($url, false, stream_context_create(['http' => ['method' => 'GET', 'ignore_errors' => true, 'timeout' => 10]]));
+    tassert($raw !== '', 'root endpoint should return a response');
+    $json = json_decode($raw, true);
+    tassert(is_array($json), 'root endpoint should return JSON');
+    tassert(($json['service'] ?? '') === 'PantryPilot API', 'root endpoint service field must be PantryPilot API');
+    tassert(($json['status'] ?? '') === 'running', 'root endpoint status field must be running');
+});
+
+runCase('Password rotation endpoint accepts valid bootstrap rotation and rejects second attempt', function (): void {
+    $pdo = pdo();
+    $tempUser = 'rotate_test_' . bin2hex(random_bytes(3));
+    $tempPass = 'temppass12345';
+    $newPass  = 'newpass67890x';
+    $hash = password_hash($tempPass, PASSWORD_BCRYPT);
+    $now  = date('Y-m-d H:i:s');
+    $pdo->prepare('INSERT INTO users(username,password_hash,display_name,role,store_id,warehouse_id,department_id,failed_login_attempts,password_reset_required,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$tempUser, $hash, 'Rotate Test', 'staff', '1', '1', '1', 0, 1, $now, $now]);
+
+    $r = api('POST', '/api/v1/identity/rotate-password', [
+        'username'         => $tempUser,
+        'current_password' => $tempPass,
+        'new_password'     => $newPass,
+    ]);
+    assertJsonContract($r, 'rotate-password success');
+    tassert($r['status'] === 200, 'rotate-password should return 200');
+    tassert(($r['json']['data']['password_rotated'] ?? false) === true, 'password_rotated flag must be true');
+
+    // Second rotation must be rejected because password_reset_required is now cleared
+    $r2 = api('POST', '/api/v1/identity/rotate-password', [
+        'username'         => $tempUser,
+        'current_password' => $newPass,
+        'new_password'     => 'anotherpass1234',
+    ]);
+    tassert($r2['status'] === 422, 'second rotation attempt on non-bootstrap account must be rejected');
+});
+
+runCase('Recipe list and create endpoints are accessible with proper authorization', function () use (&$adminToken, &$scopedToken): void {
+    $list = api('GET', '/api/v1/recipes', [], $adminToken);
+    assertJsonContract($list, 'GET /api/v1/recipes');
+    tassert($list['status'] === 200, 'recipe list should return 200');
+    tassert(array_key_exists('items', $list['json']['data'] ?? []), 'recipe list must include items key');
+
+    // ops_staff also has recipe:read
+    $listScoped = api('GET', '/api/v1/recipes', [], $scopedToken);
+    assertJsonContract($listScoped, 'GET /api/v1/recipes scoped');
+    tassert($listScoped['status'] === 200, 'ops_staff recipe list should return 200');
+
+    $create = api('POST', '/api/v1/recipes', [
+        'name'           => 'Integration Test Recipe ' . bin2hex(random_bytes(2)),
+        'description'    => 'Created by integration test',
+        'ingredients'    => ['flour', 'water', 'salt'],
+        'cookware'       => ['pot'],
+        'allergens'      => [],
+        'prep_minutes'   => 20,
+        'step_count'     => 3,
+        'servings'       => 2,
+        'difficulty'     => 'easy',
+        'calories'       => 300,
+        'estimated_cost' => 5.0,
+        'status'         => 'draft',
+    ], $adminToken);
+    assertJsonContract($create, 'POST /api/v1/recipes');
+    tassert($create['status'] === 201, 'recipe create should return 201');
+    tassert(($create['json']['data']['id'] ?? 0) > 0, 'created recipe must have an id');
+});
+
+runCase('Tag list and create endpoints are accessible with proper authorization', function () use (&$adminToken, &$scopedToken): void {
+    $list = api('GET', '/api/v1/tags', [], $adminToken);
+    assertJsonContract($list, 'GET /api/v1/tags');
+    tassert($list['status'] === 200, 'tag list should return 200');
+    tassert(array_key_exists('items', $list['json']['data'] ?? []), 'tag list must include items key');
+
+    // ops_staff also has recipe:read which covers tags
+    $listScoped = api('GET', '/api/v1/tags', [], $scopedToken);
+    assertJsonContract($listScoped, 'GET /api/v1/tags scoped');
+    tassert($listScoped['status'] === 200, 'ops_staff tag list should return 200');
+
+    $create = api('POST', '/api/v1/tags', [
+        'name'  => 'integration-tag-' . bin2hex(random_bytes(2)),
+        'color' => '#ff5733',
+    ], $adminToken);
+    assertJsonContract($create, 'POST /api/v1/tags');
+    tassert($create['status'] === 201, 'tag create should return 201');
+    tassert(($create['json']['data']['id'] ?? 0) > 0, 'created tag must have an id');
+});
+
+runCase('Pickup-points alias endpoint returns same data as canonical route', function () use (&$adminToken): void {
+    $alias = api('GET', '/api/v1/pickup-points', [], $adminToken);
+    assertJsonContract($alias, 'GET /api/v1/pickup-points alias');
+    tassert($alias['status'] === 200, 'pickup-points alias should return 200');
+    tassert(array_key_exists('items', $alias['json']['data'] ?? []), 'pickup-points alias must include items key');
+
+    $canonical = api('GET', '/api/v1/bookings/pickup-points', [], $adminToken);
+    tassert($canonical['status'] === 200, 'canonical pickup-points should return 200');
+    tassert(
+        count($alias['json']['data']['items'] ?? []) === count($canonical['json']['data']['items'] ?? []),
+        'alias and canonical pickup-points must return same item count'
+    );
+});
+
+runCase('Manual reconcile entry and close batch lifecycle with reauth requirement', function () use (&$adminToken): void {
+    $batchRef = 'MREC-' . strtoupper(bin2hex(random_bytes(3)));
+
+    // POST /api/v1/payments/reconcile - manual reconciliation entry
+    $rec = api('POST', '/api/v1/payments/reconcile', [
+        'batch_ref'      => $batchRef,
+        'period_start'   => date('Y-m-d'),
+        'period_end'     => date('Y-m-d'),
+        'expected_total' => 200.0,
+        'actual_total'   => 200.0,
+        'status'         => 'open',
+    ], $adminToken);
+    assertJsonContract($rec, 'POST /api/v1/payments/reconcile');
+    tassert($rec['status'] === 201, 'manual reconcile entry should return 201');
+    tassert(($rec['json']['data']['batch_ref'] ?? '') === $batchRef, 'reconcile must return the provided batch_ref');
+    tassert((float) ($rec['json']['data']['variance'] ?? 1.0) === 0.0, 'matched totals should produce zero variance');
+
+    // Attempt close without valid reauth token must fail
+    $badClose = api('POST', '/api/v1/payments/reconcile/close', [
+        'batch_ref'    => $batchRef,
+        'reauth_token' => 'invalid-reauth-token',
+    ], $adminToken);
+    tassert($badClose['status'] === 422, 'close batch without valid reauth token must be rejected');
+
+    // Issue a reauth token for admin
+    $reauth = api('POST', '/api/v1/admin/reauth', ['password' => 'admin12345'], $adminToken);
+    assertJsonContract($reauth, 'admin reauth for close batch');
+    tassert($reauth['status'] === 200, 'reauth should return 200');
+    $reauthToken = (string) ($reauth['json']['data']['reauth_token'] ?? '');
+    tassert($reauthToken !== '', 'reauth token required for close batch');
+
+    // POST /api/v1/payments/reconcile/close - close the batch with valid reauth
+    $close = api('POST', '/api/v1/payments/reconcile/close', [
+        'batch_ref'    => $batchRef,
+        'reauth_token' => $reauthToken,
+    ], $adminToken);
+    assertJsonContract($close, 'POST /api/v1/payments/reconcile/close');
+    tassert($close['status'] === 200, 'close batch should return 200');
+    tassert(($close['json']['data']['closed'] ?? false) === true, 'closed flag must be true');
+});
+
+runCase('Notification events list endpoint is accessible and scoped', function () use (&$adminToken, &$scopedToken): void {
+    $r = api('GET', '/api/v1/notifications/events', [], $adminToken);
+    assertJsonContract($r, 'GET /api/v1/notifications/events admin');
+    tassert($r['status'] === 200, 'admin notification events list should return 200');
+    tassert(array_key_exists('items', $r['json']['data'] ?? []), 'events list must include items key');
+
+    // ops_staff has notification:read
+    $rScoped = api('GET', '/api/v1/notifications/events', [], $scopedToken);
+    assertJsonContract($rScoped, 'GET /api/v1/notifications/events scoped');
+    tassert($rScoped['status'] === 200, 'ops_staff notification events list should return 200');
+});
+
+runCase('Reporting anomaly generate endpoint triggers alert generation', function () use (&$adminToken): void {
+    $r = api('POST', '/api/v1/reporting/anomalies/generate', [], $adminToken);
+    assertJsonContract($r, 'POST /api/v1/reporting/anomalies/generate');
+    tassert($r['status'] === 200, 'anomaly generate should return 200');
+    tassert(isOk($r), 'anomaly generate must succeed');
+    tassert(array_key_exists('alerts_generated', $r['json']['data'] ?? []), 'generate must include alerts_generated key');
+});
+
+runCase('Admin metadata read endpoints return role, permission, and resource lists; non-admin is denied', function () use (&$adminToken, &$scopedToken): void {
+    $roles = api('GET', '/api/v1/admin/roles', [], $adminToken);
+    assertJsonContract($roles, 'GET /api/v1/admin/roles');
+    tassert($roles['status'] === 200, 'admin roles list should return 200');
+    $roleItems = $roles['json']['data']['items'] ?? null;
+    tassert(is_array($roleItems) && count($roleItems) > 0, 'roles list must be non-empty array');
+
+    $perms = api('GET', '/api/v1/admin/permissions', [], $adminToken);
+    assertJsonContract($perms, 'GET /api/v1/admin/permissions');
+    tassert($perms['status'] === 200, 'admin permissions list should return 200');
+    $permItems = $perms['json']['data']['items'] ?? null;
+    tassert(is_array($permItems) && count($permItems) > 0, 'permissions list must be non-empty array');
+
+    $resources = api('GET', '/api/v1/admin/resources', [], $adminToken);
+    assertJsonContract($resources, 'GET /api/v1/admin/resources');
+    tassert($resources['status'] === 200, 'admin resources list should return 200');
+    $resItems = $resources['json']['data']['items'] ?? null;
+    tassert(is_array($resItems) && count($resItems) > 0, 'resources list must be non-empty array');
+
+    // Non-admin must be denied all three
+    $deniedRoles = api('GET', '/api/v1/admin/roles', [], $scopedToken);
+    tassert($deniedRoles['status'] === 403, 'non-admin must be denied roles list');
+
+    $deniedPerms = api('GET', '/api/v1/admin/permissions', [], $scopedToken);
+    tassert($deniedPerms['status'] === 403, 'non-admin must be denied permissions list');
+
+    $deniedRes = api('GET', '/api/v1/admin/resources', [], $scopedToken);
+    tassert($deniedRes['status'] === 403, 'non-admin must be denied resources list');
+});
+
 echo "API tests passed={$results['passed']} failed={$results['failed']}\n";
 exit($results['failed'] === 0 ? 0 : 1);
